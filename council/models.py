@@ -1,5 +1,6 @@
 import random
 import time
+from collections.abc import Generator
 
 from .config import ModelConfig
 from .providers.base import Message, Provider
@@ -29,6 +30,18 @@ class Model:
         for attempt in range(MAX_RETRIES + 1):
             try:
                 return self.provider.send_message(messages)
+            except Exception as e:
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    time.sleep(RETRY_BASE_DELAY * (2 ** attempt))
+        raise last_error
+
+    def send_stream(self, messages: list[Message]) -> Generator[str, None, None]:
+        last_error = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                yield from self.provider.stream_message(messages)
+                return
             except Exception as e:
                 last_error = e
                 if attempt < MAX_RETRIES:

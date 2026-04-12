@@ -1,3 +1,6 @@
+import sys
+from collections.abc import Generator
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -36,12 +39,32 @@ class Display:
         console.print(f"[bold white]You:[/bold white] {prompt}")
         console.print()
 
-    def show_model_response(self, model_name: str, role: str, response: str) -> None:
+    def show_model_header(self, model_name: str, role: str) -> None:
         color = self.color_map.get(model_name, "white")
         header = Text(f"--- {model_name} ({role}) ---", style=f"bold {color}")
         console.print(header)
+
+    def stream_text(self, chunk: str) -> None:
+        sys.stdout.write(chunk)
+        sys.stdout.flush()
+
+    def end_stream(self) -> None:
+        sys.stdout.write("\n\n")
+        sys.stdout.flush()
+
+    def show_model_response(self, model_name: str, role: str, response: str) -> None:
+        self.show_model_header(model_name, role)
         console.print(response)
         console.print()
+
+    def stream_model_response(self, model_name: str, role: str, stream: Generator[str, None, None]) -> str:
+        self.show_model_header(model_name, role)
+        full_text = []
+        for chunk in stream:
+            self.stream_text(chunk)
+            full_text.append(chunk)
+        self.end_stream()
+        return "".join(full_text)
 
     def show_model_skipped(self, model_name: str, error: str) -> None:
         console.print(f"[red]--- {model_name} (Skipped: {error}) ---[/red]")

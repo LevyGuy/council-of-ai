@@ -1,3 +1,5 @@
+from collections.abc import Generator
+
 from google import genai
 from google.genai import types
 
@@ -9,10 +11,9 @@ class GoogleProvider(Provider):
         super().__init__(model_id, api_key)
         self.client = genai.Client(api_key=api_key)
 
-    def send_message(self, messages: list[Message]) -> str:
+    def _prepare(self, messages: list[Message]) -> tuple[str | None, list[types.Content]]:
         system_instruction = None
         contents = []
-
         for msg in messages:
             if msg.role == "system":
                 system_instruction = msg.content
@@ -20,15 +21,31 @@ class GoogleProvider(Provider):
                 contents.append(types.Content(role="user", parts=[types.Part(text=msg.content)]))
             elif msg.role == "assistant":
                 contents.append(types.Content(role="model", parts=[types.Part(text=msg.content)]))
+        return system_instruction, contents
 
+    def send_message(self, messages: list[Message]) -> str:
+        system_instruction, contents = self._prepare(messages)
         config = types.GenerateContentConfig(
             max_output_tokens=2048,
             system_instruction=system_instruction,
         )
-
         response = self.client.models.generate_content(
             model=self.model_id,
             contents=contents,
             config=config,
         )
         return response.text
+
+    def stream_message(self, messages: list[Message]) -> Generator[str, None, None]:
+        system_instruction, contents = self._prepare(messages)
+        config = types.GenerateContentConfig(
+            max_output_tokens=2048,
+            system_instruction=system_instruction,
+        )
+        for chunk in self.client.models.generate_content_stream(
+            model=self.model_id,
+            contents=contents,
+            config=config,
+        ):
+            if chunk.text:
+                yield chunk.text

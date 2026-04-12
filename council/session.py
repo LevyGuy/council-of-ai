@@ -3,41 +3,74 @@ from .models import Model, ModelQueue
 from .providers.base import Message
 from .transcript import Iteration, Transcript, Turn
 
-COMPLETE_SIGNAL = "[COMPLETE]"
+COMPLETE_SIGNAL = "[COUNCIL_DONE]"
+
+ROUND_TABLE_PREAMBLE = (
+    "You are participating in a round table discussion with other AI models. "
+    "Speak naturally as if you are addressing the other participants directly — "
+    "use their names when referring to them (e.g., 'Claude, you made a great point about...' "
+    "or 'I agree with Gemini's take on...'). "
+    "Be conversational, collegial, and direct — like colleagues debating at a table. "
+    "Avoid narrating in third person (don't say 'Claude provides a thoughtful...' — "
+    "instead say 'Claude, you provide a thoughtful...').\n\n"
+)
 
 
-def build_review_system_prompt(current_model: str, conversation_so_far: str) -> str:
+def _build_initial_system_prompt(model_name: str) -> str:
     return (
-        f"Your name is {current_model}. "
-        f"The above is the user's prompt and the responses from other models so far. "
-        f"Please review the previous responses and:\n"
-        f"a. Grade their accuracy.\n"
-        f"b. Offer adjustments if any.\n"
-        f"In your response, refer to each model by its name.\n"
-        f"Keep your responses short and concise."
+        f"Your name is {model_name}. A user has posed a question. "
+        f"You are the first to respond — no one else has spoken yet. "
+        f"Answer the user's question directly. Do NOT reference or address other models, "
+        f"as they have not said anything yet. Give a thorough but concise answer."
     )
 
 
-def build_followup_system_prompt(first_model: str) -> str:
+def _build_review_system_prompt(current_model: str, models_who_spoke: list[str]) -> str:
+    spoke_str = ", ".join(models_who_spoke)
     return (
-        f"Your name is {first_model}. "
-        f"The above is the full conversation so far. The other models have reviewed your response. "
-        f"Do you have anything to add, correct, or adjust based on their feedback? "
-        f"If the conversation is complete and no changes are needed, respond with exactly: {COMPLETE_SIGNAL} "
-        f"Otherwise, provide your additions or corrections. Keep your response short and concise."
+        ROUND_TABLE_PREAMBLE
+        + f"Your name is {current_model}. "
+        f"You are sitting at a round table discussion. "
+        f"The user asked a question and so far the following participants have responded: {spoke_str}. "
+        f"ONLY review and reference models whose responses actually appear above. "
+        f"Do NOT reference or address any model that has not spoken yet. "
+        f"Review ALL of the responses above — not just the last one. "
+        f"For each response you find noteworthy:\n"
+        f"a. Grade its accuracy.\n"
+        f"b. Offer adjustments or push back if you disagree.\n"
+        f"c. Highlight points you agree with.\n"
+        f"Address each participant by name directly. "
+        f"Keep your response short and concise."
     )
 
 
-def build_conversation_text(user_prompt: str, turns: list[Turn]) -> str:
+def _build_followup_system_prompt(first_model: str) -> str:
+    return (
+        ROUND_TABLE_PREAMBLE
+        + f"Your name is {first_model}. You gave the initial response and the rest of the table "
+        f"has weighed in with their reviews and feedback.\n\n"
+        f"If you believe the discussion has reached a solid conclusion, provide a brief summary that includes:\n"
+        f"- What the user originally asked\n"
+        f"- The key points and consensus from the discussion\n"
+        f"- Any remaining nuances or caveats\n"
+        f"End your summary with the marker: {COMPLETE_SIGNAL}\n\n"
+        f"If you think there are still meaningful points to address or corrections to make, "
+        f"share them and do NOT include {COMPLETE_SIGNAL}. "
+        f"Keep your response short and concise."
+    )
+
+
+def _build_conversation_text(user_prompt: str, turns: list[Turn]) -> str:
     parts = [f"User: {user_prompt}"]
     for turn in turns:
         parts.append(f"{turn.model_name}: {turn.content}")
     return "\n\n".join(parts)
 
 
-def _try_send(model: Model, messages: list[Message], display: Display) -> str | None:
+def _try_send_stream(model: Model, messages: list[Message], display: Display, role: str) -> str | None:
     try:
-        return model.send(messages)
+        stream = model.send_stream(messages)
+        return display.stream_model_response(model.name, role, stream)
     except Exception as e:
         display.show_model_skipped(model.name, str(e))
         return None
@@ -55,66 +88,47 @@ def run_session(queue: ModelQueue, user_prompt: str, max_iterations: int, displa
             # First model gives initial response
             first = queue.first
             messages = [
-                Message(role="system", content=f"Your name is {first.name}. Keep your responses thorough but concise."),
+                Message(role="system", content=_build_initial_system_prompt(first.name)),
                 Message(role="user", content=user_prompt),
             ]
-            response = _try_send(first, messages, display)
+            response = _try_send_stream(first, messages, display, "Initial Response")
             if response is None:
                 break
 
             turn = Turn(model_name=first.name, role="Initial Response", content=response)
             all_turns.append(turn)
             iteration.turns.append(turn)
-            display.show_model_response(first.name, "Initial Response", response)
 
-            # Reviewers
-            for reviewer in queue.reviewers:
-                conversation_text = build_conversation_text(user_prompt, all_turns)
-                messages = [
-                    Message(role="system", content=build_review_system_prompt(reviewer.name, conversation_text)),
-                    Message(role="user", content=conversation_text),
-                ]
-                response = _try_send(reviewer, messages, display)
-                if response is None:
-                    continue
+        # Reviewers review ALL previous responses
+        for reviewer in queue.reviewers:
+            conversation_text = _build_conversation_text(user_prompt, all_turns)
+            models_who_spoke = list(dict.fromkeys(t.model_name for t in all_turns))
+            messages = [
+                Message(role="system", content=_build_review_system_prompt(reviewer.name, models_who_spoke)),
+                Message(role="user", content=conversation_text),
+            ]
+            response = _try_send_stream(reviewer, messages, display, "Review")
+            if response is None:
+                continue
 
-                turn = Turn(model_name=reviewer.name, role="Review", content=response)
-                all_turns.append(turn)
-                iteration.turns.append(turn)
-                display.show_model_response(reviewer.name, "Review", response)
+            turn = Turn(model_name=reviewer.name, role="Review", content=response)
+            all_turns.append(turn)
+            iteration.turns.append(turn)
 
-        else:
-            # Subsequent iterations: reviewers review the first model's follow-up
-            for reviewer in queue.reviewers:
-                conversation_text = build_conversation_text(user_prompt, all_turns)
-                messages = [
-                    Message(role="system", content=build_review_system_prompt(reviewer.name, conversation_text)),
-                    Message(role="user", content=conversation_text),
-                ]
-                response = _try_send(reviewer, messages, display)
-                if response is None:
-                    continue
-
-                turn = Turn(model_name=reviewer.name, role="Review", content=response)
-                all_turns.append(turn)
-                iteration.turns.append(turn)
-                display.show_model_response(reviewer.name, "Review", response)
-
-        # First model follow-up check
+        # First model follow-up / summary check
         first = queue.first
-        conversation_text = build_conversation_text(user_prompt, all_turns)
+        conversation_text = _build_conversation_text(user_prompt, all_turns)
         messages = [
-            Message(role="system", content=build_followup_system_prompt(first.name)),
+            Message(role="system", content=_build_followup_system_prompt(first.name)),
             Message(role="user", content=conversation_text),
         ]
-        response = _try_send(first, messages, display)
+        response = _try_send_stream(first, messages, display, "Follow-up")
         if response is None:
             break
 
         turn = Turn(model_name=first.name, role="Follow-up", content=response)
         all_turns.append(turn)
         iteration.turns.append(turn)
-        display.show_model_response(first.name, "Follow-up", response)
 
         transcript.iterations.append(iteration)
 
@@ -122,7 +136,7 @@ def run_session(queue: ModelQueue, user_prompt: str, max_iterations: int, displa
         if COMPLETE_SIGNAL in response:
             break
 
-    # If no iterations were appended (edge case), still save what we have
+    # Edge case: save partial turns if no iterations were fully appended
     if not transcript.iterations and all_turns:
         iteration = Iteration(number=1, turns=[t for t in all_turns])
         transcript.iterations.append(iteration)

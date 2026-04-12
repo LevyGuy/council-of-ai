@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Generator
 from dataclasses import dataclass
 
 
@@ -17,4 +18,9 @@ class Provider(ABC):
     @abstractmethod
     def send_message(self, messages: list[Message]) -> str:
         """Send messages and return the response text."""
+        ...
+
+    @abstractmethod
+    def stream_message(self, messages: list[Message]) -> Generator[str, None, None]:
+        """Stream messages and yield text chunks as they arrive."""
         ...
