@@ -1,0 +1,25 @@
+models:
+  - name: Claude
+    provider: anthropic
+    model_id: claude-sonnet-4-20250514
+    api_key_env: ANTHROPIC_API_KEY
+
+  - name: GPT
+    provider: openai
+    model_id: gpt-4o
+    api_key_env: OPENAI_API_KEY
+
+  - name: Gemini
+    provider: google
+    model_id: gemini-2.5-flash
+    api_key_env: GOOGLE_API_KEY
+
+  - name: Grok
+    provider: xai
+    model_id: grok-3
+    api_key_env: XAI_API_KEY
+
+session:
+  max_iterations: 4
+  transcript_dir: ./transcripts
+  shuffle: true
