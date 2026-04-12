@@ -6,13 +6,14 @@ from .transcript import Iteration, Transcript, Turn
 COMPLETE_SIGNAL = "[COUNCIL_DONE]"
 
 ROUND_TABLE_PREAMBLE = (
-    "You are participating in a round table discussion with other AI models. "
-    "Speak naturally as if you are addressing the other participants directly — "
-    "use their names when referring to them (e.g., 'Claude, you made a great point about...' "
-    "or 'I agree with Gemini's take on...'). "
-    "Be conversational, collegial, and direct — like colleagues debating at a table. "
-    "Avoid narrating in third person (don't say 'Claude provides a thoughtful...' — "
-    "instead say 'Claude, you provide a thoughtful...').\n\n"
+    "You are participating in a formal round table discussion with other AI models. "
+    "Maintain a professional, academic tone throughout — as if you are panelists "
+    "at a professional conference or peer reviewers in a journal. "
+    "Address other participants by name directly (e.g., 'GPT, your point about X is well-taken' "
+    "or 'I would note that Gemini's analysis overlooks...'). "
+    "Do NOT use casual greetings like 'Hey', 'Hey everyone', 'Great discussion', or similar. "
+    "Do NOT narrate in third person (don't say 'Claude provides...' — say 'Claude, you provide...'). "
+    "Get straight to the substance.\n\n"
 )
 
 
