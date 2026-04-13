@@ -59,6 +59,7 @@ class RagDocumentRequest(BaseModel):
 class SessionRequest(BaseModel):
     query: str
     rag_documents: Optional[list[RagDocumentRequest]] = None
+    prior_conversation: str = ""
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -124,7 +125,8 @@ async def start_session(req: SessionRequest):
             try:
                 logger.debug("Background thread started")
                 for event in run_session_events(
-                    queue, req.query, config.session.max_iterations, rag_context=rag_context
+                    queue, req.query, config.session.max_iterations,
+                    rag_context=rag_context, prior_conversation=req.prior_conversation,
                 ):
                     event_count += 1
                     etype = event.get("type", "unknown")
@@ -165,6 +167,7 @@ async def start_session(req: SessionRequest):
             # Save transcript for the done event
             if event["type"] == "done":
                 transcript = event["transcript"]
+                conversation_text = event.get("conversation_text", "")
                 try:
                     path = transcript.save(config.session.transcript_dir)
                     logger.info("Transcript saved to %s", path)
@@ -172,6 +175,7 @@ async def start_session(req: SessionRequest):
                         "type": "done",
                         "iterations": len(transcript.iterations),
                         "transcript": path,
+                        "conversation_text": conversation_text,
                     }
                 except Exception as e:
                     logger.error("Failed to save transcript: %s", e)
@@ -179,6 +183,7 @@ async def start_session(req: SessionRequest):
                         "type": "done",
                         "iterations": len(transcript.iterations),
                         "transcript": None,
+                        "conversation_text": conversation_text,
                     }
 
             yield {"data": json.dumps(event)}

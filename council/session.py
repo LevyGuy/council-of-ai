@@ -22,7 +22,16 @@ ROUND_TABLE_PREAMBLE = (
 )
 
 
-def _build_initial_system_prompt(model_name: str) -> str:
+def _build_initial_system_prompt(model_name: str, is_followup: bool = False) -> str:
+    if is_followup:
+        return (
+            f"Your name is {model_name}. The user has asked a follow-up question "
+            f"to a previous council discussion. The full prior conversation is provided for context. "
+            f"You are the first to respond to this follow-up — no one else has spoken yet on this new question. "
+            f"Answer the user's follow-up question directly, building on the prior discussion. "
+            f"Do NOT reference or address other models, as they have not said anything yet on this follow-up. "
+            f"Give a thorough but concise answer."
+        )
     return (
         f"Your name is {model_name}. A user has posed a question. "
         f"You are the first to respond — no one else has spoken yet. "
@@ -73,8 +82,16 @@ def _build_user_message(user_prompt: str, rag_context: str = "") -> str:
     return user_prompt
 
 
-def _build_conversation_text(user_prompt: str, turns: list[Turn], rag_context: str = "") -> str:
-    parts = [f"User: {_build_user_message(user_prompt, rag_context)}"]
+def _build_conversation_text(
+    user_prompt: str, turns: list[Turn], rag_context: str = "",
+    prior_conversation: str = "",
+) -> str:
+    parts = []
+    if prior_conversation:
+        parts.append(prior_conversation)
+        parts.append(f"User (follow-up): {_build_user_message(user_prompt, rag_context)}")
+    else:
+        parts.append(f"User: {_build_user_message(user_prompt, rag_context)}")
     for turn in turns:
         parts.append(f"{turn.model_name}: {turn.content}")
     return "\n\n".join(parts)
@@ -167,7 +184,8 @@ def _model_key(name: str) -> str:
 
 
 def run_session_events(
-    queue: ModelQueue, user_prompt: str, max_iterations: int, rag_context: str = ""
+    queue: ModelQueue, user_prompt: str, max_iterations: int,
+    rag_context: str = "", prior_conversation: str = "",
 ) -> Generator[dict, None, None]:
     """Run a deliberation session, yielding SSE-friendly event dicts.
 
@@ -178,9 +196,13 @@ def run_session_events(
         chunk          — a text chunk from the streaming response
         turn_end       — full text of the completed turn
         error          — a model was skipped
-        done           — session complete, includes transcript
+        done           — session complete, includes transcript + conversation_text
     """
-    logger.info("run_session_events started: prompt=%r, max_iter=%d", user_prompt[:80], max_iterations)
+    is_followup = bool(prior_conversation)
+    logger.info(
+        "run_session_events started: prompt=%r, max_iter=%d, followup=%s",
+        user_prompt[:80], max_iterations, is_followup,
+    )
     if rag_context:
         logger.info("RAG context attached: %d chars", len(rag_context))
 
@@ -202,9 +224,14 @@ def run_session_events(
         if iteration_num == 1:
             # First model gives initial response — include RAG context in user message
             first = queue.first
+            initial_content = (
+                _build_conversation_text(user_prompt, [], rag_context, prior_conversation)
+                if is_followup
+                else _build_user_message(user_prompt, rag_context)
+            )
             messages = [
-                Message(role="system", content=_build_initial_system_prompt(first.name)),
-                Message(role="user", content=_build_user_message(user_prompt, rag_context)),
+                Message(role="system", content=_build_initial_system_prompt(first.name, is_followup)),
+                Message(role="user", content=initial_content),
             ]
 
             response = yield from _stream_model_events(first, messages, "Initial Response")
@@ -217,7 +244,7 @@ def run_session_events(
 
         # Reviewers — RAG context is threaded into the full conversation text
         for reviewer in queue.reviewers:
-            conversation_text = _build_conversation_text(user_prompt, all_turns, rag_context)
+            conversation_text = _build_conversation_text(user_prompt, all_turns, rag_context, prior_conversation)
             models_who_spoke = list(dict.fromkeys(t.model_name for t in all_turns))
             messages = [
                 Message(role="system", content=_build_review_system_prompt(reviewer.name, models_who_spoke)),
@@ -234,7 +261,7 @@ def run_session_events(
 
         # First model follow-up / summary
         first = queue.first
-        conversation_text = _build_conversation_text(user_prompt, all_turns, rag_context)
+        conversation_text = _build_conversation_text(user_prompt, all_turns, rag_context, prior_conversation)
         messages = [
             Message(role="system", content=_build_followup_system_prompt(first.name)),
             Message(role="user", content=conversation_text),
@@ -259,7 +286,9 @@ def run_session_events(
         iteration = Iteration(number=1, turns=list(all_turns))
         transcript.iterations.append(iteration)
 
-    yield {"type": "done", "transcript": transcript}
+    # Build the full conversation text so the client can use it for follow-ups
+    full_conversation = _build_conversation_text(user_prompt, all_turns, rag_context, prior_conversation)
+    yield {"type": "done", "transcript": transcript, "conversation_text": full_conversation}
 
 
 def _stream_model_events(
