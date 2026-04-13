@@ -77,6 +77,28 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def filter_available_models(config: AppConfig, warn_fn=None) -> AppConfig:
+    """Filter out models without API keys. Raises if fewer than 2 remain."""
+    available = []
+    missing = []
+    for m in config.models:
+        if m.get_api_key():
+            available.append(m)
+        else:
+            missing.append(m.name)
+
+    if missing and warn_fn:
+        warn_fn(f"Skipping models with missing API keys: {', '.join(missing)}")
+
+    if len(available) < 2:
+        raise RuntimeError(
+            f"At least 2 models with valid API keys are required. Only {len(available)} available."
+        )
+
+    config.models = available
+    return config
+
+
 def build_config() -> AppConfig:
     args = parse_args()
     config = load_config(args.config)
@@ -89,25 +111,8 @@ def build_config() -> AppConfig:
         selected = {name.strip() for name in args.models.split(",")}
         config.models = [m for m in config.models if m.name in selected]
 
-    # Filter out models without API keys
-    available = []
-    missing = []
-    for m in config.models:
-        if m.get_api_key():
-            available.append(m)
-        else:
-            missing.append(m.name)
-
-    if missing:
+    def _warn(msg):
         from rich.console import Console
-        Console(stderr=True).print(
-            f"[yellow]Warning: Skipping models with missing API keys: {', '.join(missing)}[/yellow]"
-        )
+        Console(stderr=True).print(f"[yellow]Warning: {msg}[/yellow]")
 
-    if len(available) < 2:
-        raise RuntimeError(
-            f"At least 2 models with valid API keys are required. Only {len(available)} available."
-        )
-
-    config.models = available
-    return config
+    return filter_available_models(config, warn_fn=_warn)

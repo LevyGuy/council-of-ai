@@ -1,7 +1,12 @@
+import logging
+from collections.abc import Generator
+
 from .display import Display
 from .models import Model, ModelQueue
 from .providers.base import Message
 from .transcript import Iteration, Transcript, Turn
+
+logger = logging.getLogger("council.session")
 
 COMPLETE_SIGNAL = "[COUNCIL_DONE]"
 
@@ -143,3 +148,134 @@ def run_session(queue: ModelQueue, user_prompt: str, max_iterations: int, displa
         transcript.iterations.append(iteration)
 
     return transcript
+
+
+# ---------------------------------------------------------------------------
+# Web / SSE event-based session (yields dicts instead of writing to Display)
+# ---------------------------------------------------------------------------
+
+def _model_key(name: str) -> str:
+    """Map model display name to avatar data-model key."""
+    return name.lower()
+
+
+def run_session_events(
+    queue: ModelQueue, user_prompt: str, max_iterations: int
+) -> Generator[dict, None, None]:
+    """Run a deliberation session, yielding SSE-friendly event dicts.
+
+    Event types:
+        session_start  — panel order info
+        iteration      — iteration separator
+        speaker        — which model is about to speak
+        chunk          — a text chunk from the streaming response
+        turn_end       — full text of the completed turn
+        error          — a model was skipped
+        done           — session complete, includes transcript
+    """
+    logger.info("run_session_events started: prompt=%r, max_iter=%d", user_prompt[:80], max_iterations)
+    transcript = Transcript(user_prompt=user_prompt, panel_order=queue.order_names)
+    all_turns: list[Turn] = []
+
+    # Tell the client about the panel
+    yield {
+        "type": "session_start",
+        "models": [{"name": m.name, "key": _model_key(m.name)} for m in queue.models],
+    }
+
+    for iteration_num in range(1, max_iterations + 1):
+        iteration = Iteration(number=iteration_num)
+        logger.info("Starting iteration %d/%d", iteration_num, max_iterations)
+
+        yield {"type": "iteration", "number": iteration_num, "max": max_iterations}
+
+        if iteration_num == 1:
+            # First model gives initial response
+            first = queue.first
+            messages = [
+                Message(role="system", content=_build_initial_system_prompt(first.name)),
+                Message(role="user", content=user_prompt),
+            ]
+
+            response = yield from _stream_model_events(first, messages, "Initial Response")
+            if response is None:
+                break
+
+            turn = Turn(model_name=first.name, role="Initial Response", content=response)
+            all_turns.append(turn)
+            iteration.turns.append(turn)
+
+        # Reviewers
+        for reviewer in queue.reviewers:
+            conversation_text = _build_conversation_text(user_prompt, all_turns)
+            models_who_spoke = list(dict.fromkeys(t.model_name for t in all_turns))
+            messages = [
+                Message(role="system", content=_build_review_system_prompt(reviewer.name, models_who_spoke)),
+                Message(role="user", content=conversation_text),
+            ]
+
+            response = yield from _stream_model_events(reviewer, messages, "Review")
+            if response is None:
+                continue
+
+            turn = Turn(model_name=reviewer.name, role="Review", content=response)
+            all_turns.append(turn)
+            iteration.turns.append(turn)
+
+        # First model follow-up / summary
+        first = queue.first
+        conversation_text = _build_conversation_text(user_prompt, all_turns)
+        messages = [
+            Message(role="system", content=_build_followup_system_prompt(first.name)),
+            Message(role="user", content=conversation_text),
+        ]
+
+        response = yield from _stream_model_events(first, messages, "Follow-up")
+        if response is None:
+            break
+
+        # Strip the completion signal from displayed content
+        clean_response = response.replace(COMPLETE_SIGNAL, "").strip()
+        turn = Turn(model_name=first.name, role="Follow-up", content=clean_response)
+        all_turns.append(turn)
+        iteration.turns.append(turn)
+        transcript.iterations.append(iteration)
+
+        if COMPLETE_SIGNAL in response:
+            break
+
+    # Edge case
+    if not transcript.iterations and all_turns:
+        iteration = Iteration(number=1, turns=list(all_turns))
+        transcript.iterations.append(iteration)
+
+    yield {"type": "done", "transcript": transcript}
+
+
+def _stream_model_events(
+    model: Model, messages: list[Message], role: str
+) -> Generator[dict, None, str | None]:
+    """Yield speaker + chunk events, return the full text (or None on failure)."""
+    logger.info("Streaming %s (%s)...", model.name, role)
+    yield {
+        "type": "speaker",
+        "model_key": _model_key(model.name),
+        "name": model.name,
+        "role": role,
+    }
+
+    try:
+        chunks: list[str] = []
+        for chunk in model.send_stream(messages):
+            chunks.append(chunk)
+            yield {"type": "chunk", "text": chunk}
+        full_text = "".join(chunks)
+        logger.info("%s (%s) finished: %d chars", model.name, role, len(full_text))
+        # Strip COMPLETE_SIGNAL from the turn_end content sent to the client
+        clean_text = full_text.replace(COMPLETE_SIGNAL, "").strip()
+        yield {"type": "turn_end", "content": clean_text}
+        return full_text
+    except Exception as e:
+        logger.error("%s (%s) failed: %s", model.name, role, e)
+        yield {"type": "error", "model": model.name, "message": str(e)}
+        return None

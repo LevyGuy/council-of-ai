@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>COUNCIL OF AIs</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Manrope:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "secondary-fixed": "#dac9ff",
+              "surface-container-lowest": "#ffffff",
+              "on-tertiary-fixed": "#001a28",
+              "on-secondary-container": "#5517bf",
+              "on-error": "#ffefee",
+              "error-container": "#fb5151",
+              "surface": "#f5f7f9",
+              "on-primary-fixed-variant": "#00635b",
+              "surface-bright": "#f5f7f9",
+              "on-secondary": "#f8f0ff",
+              "secondary": "#6a37d4",
+              "surface-container-highest": "#d9dde0",
+              "tertiary-fixed": "#27bcff",
+              "surface-container-high": "#dfe3e6",
+              "on-surface-variant": "#595c5e",
+              "surface-container": "#e5e9eb",
+              "on-primary": "#bffff5",
+              "on-secondary-fixed": "#40009b",
+              "background": "#f5f7f9",
+              "on-secondary-fixed-variant": "#5f28c8",
+              "primary-dim": "#005a52",
+              "on-surface": "#2c2f31",
+              "primary-fixed": "#50f4e3",
+              "inverse-primary": "#5bfdec",
+              "surface-dim": "#d0d5d8",
+              "primary-container": "#50f4e3",
+              "surface-tint": "#00675f",
+              "tertiary-container": "#27bcff",
+              "outline-variant": "#abadaf",
+              "inverse-surface": "#0b0f10",
+              "inverse-on-surface": "#9a9d9f",
+              "secondary-dim": "#5e26c7",
+              "primary": "#00675f",
+              "on-tertiary-container": "#00344b",
+              "secondary-container": "#dac9ff",
+              "on-tertiary": "#e8f4ff",
+              "on-error-container": "#570008",
+              "error": "#b31b25",
+              "outline": "#747779",
+              "tertiary": "#006289",
+              "tertiary-dim": "#005578",
+              "secondary-fixed-dim": "#ceb9ff",
+              "surface-container-low": "#eef1f3",
+              "on-tertiary-fixed-variant": "#003e58",
+              "tertiary-fixed-dim": "#00aeef"
+            },
+            fontFamily: {
+              "headline": ["Space Grotesk"],
+              "body": ["Manrope"],
+              "label": ["Space Grotesk"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(20px);
+        }
+        /* Custom scrollbar for text area if needed */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #d9dde0;
+            border-radius: 10px;
+        }
+
+        /* Speaking state for avatars */
+        .avatar-card .avatar-frame {
+            transform: scale(1);
+            opacity: 0.7;
+        }
+        .avatar-card.speaking .avatar-frame {
+            transform: scale(1.25);
+            opacity: 1;
+            background-color: #eef1f3;
+            box-shadow: 0 8px 24px rgba(0, 103, 95, 0.12);
+        }
+        .avatar-card.speaking .avatar-badge {
+            border: 2px solid #00675f;
+            box-shadow: 0 0 0 3px rgba(0, 103, 95, 0.15);
+        }
+        .avatar-card.speaking .avatar-label {
+            color: #00675f;
+        }
+        /* When any card is speaking, dim the others further */
+        #council-avatars:has(.speaking) .avatar-card:not(.speaking) .avatar-frame {
+            opacity: 0.45;
+            transform: scale(0.95);
+        }
+        /* No one speaking = all normal */
+        #council-avatars:not(:has(.speaking)) .avatar-card .avatar-frame {
+            opacity: 0.8;
+            transform: scale(1);
+        }
+    </style>
+</head>
+<body class="bg-surface font-body text-on-surface selection:bg-primary-container selection:text-on-primary-container h-screen overflow-hidden flex flex-col">
+<!-- TopAppBar - Slimmer -->
+<!-- <header class="bg-[#f5f7f9] dark:bg-slate-900 flex justify-between items-center w-full px-8 py-2 sticky top-0 z-40 border-b border-outline-variant/10"> -->
+<!-- <div class="text-base font-bold tracking-widest text-[#2c2f31] dark:text-white font-['Space_Grotesk'] uppercase">
+        COUNCIL OF LLMs
+    </div> -->
+<!-- <div class="flex items-center gap-4">
+<button class="text-[#abadaf] dark:text-slate-500 hover:bg-[#dfe3e6] dark:hover:bg-slate-700 transition-colors duration-200 p-1.5 rounded-full active:scale-95">
+<span class="material-symbols-outlined text-xl">history</span>
+</button>
+<button class="text-[#abadaf] dark:text-slate-500 hover:bg-[#dfe3e6] dark:hover:bg-slate-700 transition-colors duration-200 p-1.5 rounded-full active:scale-95">
+<span class="material-symbols-outlined text-xl">settings</span>
+</button>
+<div class="w-7 h-7 rounded-full bg-surface-container-highest overflow-hidden">
+<img alt="User profile avatar portrait" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAW6NvlCc2h2gpwLzsRtlDQRglKSTPEoQQLDC8cfjlorhAjp5W7zZb4AbBqjD2AOfS1W9hMjlooY97yy2fxkCRXH756eQNLABHjeODcc7mq9_bUD-7H7AAb2YgAGgsHvPiDnFIbLs_cvVm3hhZdl7QsH-2nBKxF8Rvhj7rfiM6qsFJ4YB0mXcj7b2FV-Zw5FTGC7DPMKRp0zd2U88a6XX9Vfryf8q10C0j1yAdl102L9LCwj8duZlHgeVfIfhHodxL1kWfTU-NHijEQ"/>
+</div>
+</div> -->
+<!-- </header> -->
+<main class="flex-grow max-w-5xl mx-auto w-full px-4 sm:px-6 py-3 sm:py-4 flex flex-col gap-2 sm:gap-4 overflow-hidden md:pb-3">
+<!-- Council Branding Header - Reduced Size -->
+<section id="council-avatars" class="flex justify-center gap-3 sm:gap-8 shrink-0">
+<div class="flex flex-col items-center group avatar-card" data-model="gemini">
+<div class="avatar-frame w-12 h-16 sm:w-16 sm:h-24 relative overflow-hidden bg-surface-container-low rounded-t-full flex items-end justify-center transition-all duration-500 group-hover:bg-surface-container">
+<img alt="Gemini head" class="w-full h-full object-cover opacity-80 mix-blend-multiply grayscale" src="images/3.png"/>
+<div class="avatar-badge absolute top-2 sm:top-3 w-5 h-5 sm:w-7 sm:h-7 bg-white rounded-full flex items-center justify-center shadow-sm transition-all duration-500">
+<span class="material-symbols-outlined text-primary text-xs sm:text-base" data-weight="fill" style="font-variation-settings: 'FILL' 1;">voice_selection</span>
+</div>
+</div>
+<span class="avatar-label mt-1 sm:mt-2 font-headline text-[7px] sm:text-[8px] font-bold tracking-[0.2em] uppercase text-outline transition-colors duration-500">Gemini-Pro</span>
+</div>
+<div class="flex flex-col items-center group avatar-card" data-model="claude">
+<div class="avatar-frame w-12 h-16 sm:w-16 sm:h-24 relative overflow-hidden bg-surface-container-low rounded-t-full flex items-end justify-center transition-all duration-500 group-hover:bg-surface-container">
+<img alt="Claude head" class="w-full h-full object-cover opacity-80 mix-blend-multiply grayscale" src="images/2.png"/>
+<div class="avatar-badge absolute top-2 sm:top-3 w-5 h-5 sm:w-7 sm:h-7 bg-white rounded-full flex items-center justify-center shadow-sm transition-all duration-500">
+<span class="material-symbols-outlined text-secondary text-xs sm:text-base" data-weight="fill" style="font-variation-settings: 'FILL' 1;">cognition</span>
+</div>
+</div>
+<span class="avatar-label mt-1 sm:mt-2 font-headline text-[7px] sm:text-[8px] font-bold tracking-[0.2em] uppercase text-outline transition-colors duration-500">Claude-3-Opus</span>
+</div>
+<div class="flex flex-col items-center group avatar-card" data-model="gpt">
+<div class="avatar-frame w-12 h-16 sm:w-16 sm:h-24 relative overflow-hidden bg-surface-container-low rounded-t-full flex items-end justify-center transition-all duration-500 group-hover:bg-surface-container">
+<img alt="ChatGPT head" class="w-full h-full object-cover opacity-80 mix-blend-multiply grayscale" src="images/1.png"/>
+<div class="avatar-badge absolute top-2 sm:top-3 w-5 h-5 sm:w-7 sm:h-7 bg-white rounded-full flex items-center justify-center shadow-sm transition-all duration-500">
+<span class="material-symbols-outlined text-tertiary text-xs sm:text-base" data-weight="fill" style="font-variation-settings: 'FILL' 1;">memory</span>
+</div>
+</div>
+<span class="avatar-label mt-1 sm:mt-2 font-headline text-[7px] sm:text-[8px] font-bold tracking-[0.2em] uppercase text-outline transition-colors duration-500">GPT-4-Turbo</span>
+</div>
+<div class="flex flex-col items-center group avatar-card" data-model="grok">
+<div class="avatar-frame w-12 h-16 sm:w-16 sm:h-24 relative overflow-hidden bg-surface-container-low rounded-t-full flex items-end justify-center transition-all duration-500 group-hover:bg-surface-container">
+<img alt="Grok head" class="w-full h-full object-cover opacity-80 mix-blend-multiply grayscale" src="images/4.png"/>
+<div class="avatar-badge absolute top-2 sm:top-3 w-5 h-5 sm:w-7 sm:h-7 bg-white rounded-full flex items-center justify-center shadow-sm transition-all duration-500">
+<span class="material-symbols-outlined text-tertiary text-xs sm:text-base" data-weight="fill" style="font-variation-settings: 'FILL' 1;">wb_incandescent</span>
+</div>
+</div>
+<span class="avatar-label mt-1 sm:mt-2 font-headline text-[7px] sm:text-[8px] font-bold tracking-[0.2em] uppercase text-outline transition-colors duration-500">Grok-4</span>
+</div>
+</section>
+<!-- Section 1: Top Section - LLM text output - Compacted -->
+<article class="flex flex-col flex-grow min-h-0">
+<div class="flex items-center gap-4 mb-3 shrink-0">
+<div class="h-[1px] flex-grow bg-outline-variant/30"></div>
+<span class="font-headline text-[9px] tracking-[0.3em] uppercase text-outline font-bold">The Council of AIs</span>
+<div class="h-[1px] flex-grow bg-outline-variant/30"></div>
+</div>
+<div class="main-text flex-grow bg-surface-container-lowest p-4 sm:p-6 rounded-xl border border-outline-variant/10 shadow-[0px_8px_24px_rgba(44,47,49,0.04)] leading-relaxed text-on-surface-variant font-light text-sm sm:text-base overflow-y-auto custom-scrollbar">
+
+</div>
+</article>
+<!-- Section 2: Middle Section - Query input box - Compacted -->
+<div class="max-w-3xl mx-auto w-full shrink-0">
+<div class="bg-surface-container-low p-2 rounded-xl border border-outline-variant/20 shadow-sm">
+<div class="flex items-center gap-3 bg-surface-container-lowest border border-outline-variant/30 rounded-lg px-4 py-2 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/5 transition-all">
+<span class="material-symbols-outlined text-outline text-lg">search</span>
+<input id="query-input" class="flex-grow bg-transparent border-none focus:ring-0 font-headline text-xs tracking-widest placeholder:text-outline-variant py-0" placeholder="QUERY THE COUNCIL..." type="text"/>
+<div class="flex items-center gap-2">
+<span class="hidden sm:inline text-[8px] font-bold text-outline uppercase tracking-widest">ENTER</span>
+<button id="send-btn" class="bg-primary text-on-primary p-1.5 rounded-md flex items-center justify-center hover:bg-primary-dim transition-colors">
+<span class="material-symbols-outlined text-base">arrow_forward</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+
+</main>
+<!-- BottomNavBar - Mobile Only (Hidden on Desktop) -->
+<!-- <nav class="fixed bottom-0 left-0 w-full flex justify-around items-center py-2 px-6 bg-white/85 dark:bg-slate-900/85 backdrop-blur-xl border-t border-[#abadaf]/20 shadow-[0px_-12px_40px_rgba(44,47,49,0.04)] z-50 md:hidden">
+<div class="flex flex-col items-center justify-center text-[#00675f] dark:text-[#50f4e3] bg-[#dac9ff]/30 rounded-lg px-3 py-1">
+<span class="material-symbols-outlined text-xl">gavel</span>
+<span class="font-['Manrope'] text-[8px] font-medium uppercase tracking-wider">Judges</span>
+</div>
+<div class="flex flex-col items-center justify-center text-[#abadaf] dark:text-slate-500">
+<span class="material-symbols-outlined text-xl">inventory_2</span>
+<span class="font-['Manrope'] text-[8px] font-medium uppercase tracking-wider">Archive</span>
+</div>
+<div class="flex flex-col items-center justify-center text-[#abadaf] dark:text-slate-500">
+<span class="material-symbols-outlined text-xl">psychology</span>
+<span class="font-['Manrope'] text-[8px] font-medium uppercase tracking-wider">Intelligence</span>
+</div>
+</nav> -->
+<script>
+    // ── DOM refs ──────────────────────────────────────────────────
+    const output    = document.querySelector('.main-text');
+    const input     = document.getElementById('query-input');
+    const sendBtn   = document.getElementById('send-btn');
+
+    console.log('[council] DOM refs:', {output: !!output, input: !!input, sendBtn: !!sendBtn});
+
+    let currentTurnEl = null;
+    let sessionActive = false;
+
+    // ── Avatar focus ──────────────────────────────────────────────
+    function setSpeaking(modelKey) {
+        document.querySelectorAll('.avatar-card').forEach(c => c.classList.remove('speaking'));
+        if (modelKey) {
+            const card = document.querySelector(`.avatar-card[data-model="${modelKey}"]`);
+            if (card) card.classList.add('speaking');
+        }
+    }
+
+    // ── Model color map (matches display.py MODEL_COLORS order) ──
+    const MODEL_COLORS = {
+        0: '#06b6d4', // cyan
+        1: '#22c55e', // green
+        2: '#d946ef', // magenta
+        3: '#eab308', // yellow
+    };
+    let modelColorMap = {};
+
+    // ── Submit query ──────────────────────────────────────────────
+    function submitQuery() {
+        const query = input.value.trim();
+        if (!query || sessionActive) return;
+
+        sessionActive = true;
+        input.disabled = true;
+        sendBtn.disabled = true;
+        input.value = '';
+        output.innerHTML = '';
+        currentTurnEl = null;
+        setSpeaking(null);
+
+        streamSession(query);
+    }
+
+    sendBtn.addEventListener('click', submitQuery);
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') submitQuery();
+    });
+
+    // ── SSE Stream ────────────────────────────────────────────────
+    async function streamSession(query) {
+        console.log('[council] Starting session, query:', query);
+        try {
+            const resp = await fetch('/api/session', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({query}),
+            });
+            console.log('[council] Response status:', resp.status);
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const {done, value} = await reader.read();
+                if (done) break;
+                const raw = decoder.decode(value, {stream: true});
+                buffer += raw;
+
+                // Normalize \r\n to \n, then split SSE events on blank lines
+                buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop(); // keep incomplete part
+
+                for (const part of parts) {
+                    // Collect all data: lines in this SSE event block
+                    let dataStr = '';
+                    for (const line of part.split('\n')) {
+                        const trimmed = line.trim();
+                        if (trimmed.startsWith('data:')) {
+                            dataStr += trimmed.substring(5).trim();
+                        }
+                    }
+                    if (dataStr) {
+                        try {
+                            const event = JSON.parse(dataStr);
+                            console.log('[council] Event:', event.type, event);
+                            handleEvent(event);
+                        } catch (parseErr) {
+                            console.warn('[council] Parse error:', dataStr, parseErr);
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('[council] Stream error:', err);
+            const errEl = document.createElement('div');
+            errEl.className = 'text-red-500 text-sm mt-4';
+            errEl.textContent = 'Connection error: ' + err.message;
+            output.appendChild(errEl);
+        } finally {
+            sessionActive = false;
+            input.disabled = false;
+            sendBtn.disabled = false;
+            input.focus();
+            setSpeaking(null);
+            console.log('[council] Session ended');
+        }
+    }
+
+    // ── Event handler ─────────────────────────────────────────────
+    function handleEvent(event) {
+        switch (event.type) {
+            case 'session_start': {
+                // Build color map from panel order
+                event.models.forEach((m, i) => {
+                    modelColorMap[m.key] = MODEL_COLORS[i] || '#94a3b8';
+                });
+                break;
+            }
+
+            case 'iteration': {
+                const sep = document.createElement('div');
+                sep.className = 'flex items-center gap-3 my-4';
+                sep.innerHTML =
+                    '<div class="h-px flex-grow bg-gray-200"></div>' +
+                    `<span class="text-[9px] font-headline tracking-[0.3em] uppercase text-gray-400 font-bold">Iteration ${event.number} / ${event.max}</span>` +
+                    '<div class="h-px flex-grow bg-gray-200"></div>';
+                output.appendChild(sep);
+                output.scrollTop = output.scrollHeight;
+                break;
+            }
+
+            case 'speaker': {
+                setSpeaking(event.model_key);
+                const color = modelColorMap[event.model_key] || '#64748b';
+
+                // Header
+                const header = document.createElement('div');
+                header.className = 'font-headline text-xs font-bold tracking-wider uppercase mt-5 mb-1';
+                header.style.color = color;
+                header.textContent = `${event.name} \u2014 ${event.role}`;
+                output.appendChild(header);
+
+                // Streaming text container
+                currentTurnEl = document.createElement('div');
+                currentTurnEl.className = 'turn-content mb-4 whitespace-pre-wrap';
+                output.appendChild(currentTurnEl);
+                output.scrollTop = output.scrollHeight;
+                break;
+            }
+
+            case 'chunk': {
+                if (currentTurnEl) {
+                    currentTurnEl.textContent += event.text;
+                    output.scrollTop = output.scrollHeight;
+                }
+                break;
+            }
+
+            case 'turn_end': {
+                if (currentTurnEl && event.html) {
+                    currentTurnEl.className = 'turn-content mb-4 prose prose-sm max-w-none';
+                    currentTurnEl.innerHTML = event.html;
+                    output.scrollTop = output.scrollHeight;
+                }
+                break;
+            }
+
+            case 'error': {
+                const errEl = document.createElement('div');
+                errEl.className = 'text-red-400 text-xs my-2 italic';
+                errEl.textContent = `${event.model} skipped: ${event.message}`;
+                output.appendChild(errEl);
+                break;
+            }
+
+            case 'done': {
+                setSpeaking(null);
+                const footer = document.createElement('div');
+                footer.className = 'flex items-center gap-3 mt-6 mb-2';
+                footer.innerHTML =
+                    '<div class="h-px flex-grow bg-green-200"></div>' +
+                    `<span class="text-[9px] font-headline tracking-[0.3em] uppercase text-green-600 font-bold">Session complete \u2014 ${event.iterations} iteration(s)</span>` +
+                    '<div class="h-px flex-grow bg-green-200"></div>';
+                output.appendChild(footer);
+                output.scrollTop = output.scrollHeight;
+                break;
+            }
+        }
+    }
+</script>
+</body></html>
