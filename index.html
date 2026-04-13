@@ -283,10 +283,18 @@
 <!-- Section 2: Middle Section - Query input box - Compacted -->
 <div class="max-w-3xl mx-auto w-full shrink-0">
 <div class="bg-surface-container-low p-2 rounded-xl border border-outline-variant/20 shadow-sm">
+<!-- Attached documents chips -->
+<div id="doc-chips" class="hidden flex flex-wrap gap-1.5 px-2 pt-1.5 pb-1"></div>
+<!-- Input row -->
 <div class="flex items-center gap-3 bg-surface-container-lowest border border-outline-variant/30 rounded-lg px-4 py-2 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/5 transition-all">
 <span class="material-symbols-outlined text-outline text-lg">search</span>
 <input id="query-input" class="flex-grow bg-transparent border-none focus:ring-0 font-headline text-xs tracking-widest placeholder:text-outline-variant py-0" placeholder="QUERY THE COUNCIL..." type="text"/>
 <div class="flex items-center gap-2">
+<!-- Attach button -->
+<button id="attach-btn" title="Attach documents" class="text-outline hover:text-primary transition-colors p-0.5 rounded" type="button">
+  <span class="material-symbols-outlined text-lg">attach_file</span>
+</button>
+<input id="file-input" type="file" multiple accept=".txt,.md,.csv,.pdf,.html,.htm" class="hidden"/>
 <span class="hidden sm:inline text-[8px] font-bold text-outline uppercase tracking-widest">ENTER</span>
 <button id="send-btn" class="bg-primary text-on-primary p-1.5 rounded-md flex items-center justify-center hover:bg-primary-dim transition-colors">
 <span class="material-symbols-outlined text-base">arrow_forward</span>
@@ -319,11 +327,18 @@
     const output    = document.querySelector('.main-text');
     const input     = document.getElementById('query-input');
     const sendBtn   = document.getElementById('send-btn');
+    const attachBtn = document.getElementById('attach-btn');
+    const fileInput = document.getElementById('file-input');
+    const docChips  = document.getElementById('doc-chips');
 
     console.log('[council] DOM refs:', {output: !!output, input: !!input, sendBtn: !!sendBtn});
 
     let currentTurnEl = null;
     let sessionActive = false;
+
+    // ── Document attachment state ─────────────────────────────────
+    // Each entry: { filename, content, truncated }
+    let attachedDocs = [];
 
     // ── Pretext streaming state ───────────────────────────────────
     let streamBuffer = '';           // accumulated raw text for current turn
@@ -350,6 +365,64 @@
     };
     let modelColorMap = {};
 
+    // ── File attachment ───────────────────────────────────────────
+    attachBtn.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', async () => {
+        const files = Array.from(fileInput.files || []);
+        if (!files.length) return;
+        fileInput.value = '';  // reset so same file can be re-added
+
+        attachBtn.disabled = true;
+        attachBtn.querySelector('span').textContent = 'hourglass_empty';
+
+        try {
+            const form = new FormData();
+            for (const f of files) form.append('files', f);
+
+            const resp = await fetch('/api/upload', { method: 'POST', body: form });
+            if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
+            const { documents } = await resp.json();
+
+            for (const doc of documents) {
+                if (doc.error) {
+                    console.warn('[council] Upload error for', doc.filename, doc.error);
+                } else {
+                    attachedDocs.push({ filename: doc.filename, content: doc.content, truncated: doc.truncated });
+                }
+            }
+            renderDocChips();
+        } catch (err) {
+            console.error('[council] Upload error:', err);
+        } finally {
+            attachBtn.disabled = false;
+            attachBtn.querySelector('span').textContent = 'attach_file';
+        }
+    });
+
+    function renderDocChips() {
+        docChips.innerHTML = '';
+        if (attachedDocs.length === 0) {
+            docChips.classList.add('hidden');
+            return;
+        }
+        docChips.classList.remove('hidden');
+        attachedDocs.forEach((doc, idx) => {
+            const chip = document.createElement('div');
+            chip.className = 'flex items-center gap-1 bg-primary-container text-on-surface text-[10px] font-headline tracking-wide px-2 py-0.5 rounded-full';
+            chip.innerHTML =
+                `<span class="material-symbols-outlined text-sm text-primary" style="font-size:14px">description</span>` +
+                `<span class="max-w-[140px] truncate">${doc.filename}${doc.truncated ? ' ⚠' : ''}</span>` +
+                `<button class="ml-1 text-outline hover:text-error transition-colors" data-idx="${idx}" title="Remove">` +
+                `<span class="material-symbols-outlined" style="font-size:13px">close</span></button>`;
+            chip.querySelector('button').addEventListener('click', () => {
+                attachedDocs.splice(idx, 1);
+                renderDocChips();
+            });
+            docChips.appendChild(chip);
+        });
+    }
+
     // ── Submit query ──────────────────────────────────────────────
     function submitQuery() {
         const query = input.value.trim();
@@ -358,12 +431,16 @@
         sessionActive = true;
         input.disabled = true;
         sendBtn.disabled = true;
+        attachBtn.disabled = true;
         input.value = '';
         output.innerHTML = '';
         currentTurnEl = null;
         setSpeaking(null);
 
-        streamSession(query);
+        streamSession(query, attachedDocs.slice());
+        // Clear docs after sending
+        attachedDocs = [];
+        renderDocChips();
     }
 
     sendBtn.addEventListener('click', submitQuery);
@@ -372,13 +449,17 @@
     });
 
     // ── SSE Stream ────────────────────────────────────────────────
-    async function streamSession(query) {
-        console.log('[council] Starting session, query:', query);
+    async function streamSession(query, ragDocs = []) {
+        console.log('[council] Starting session, query:', query, 'docs:', ragDocs.length);
         try {
+            const body = { query };
+            if (ragDocs.length > 0) {
+                body.rag_documents = ragDocs.map(d => ({ filename: d.filename, content: d.content }));
+            }
             const resp = await fetch('/api/session', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({query}),
+                body: JSON.stringify(body),
             });
             console.log('[council] Response status:', resp.status);
 
@@ -427,6 +508,7 @@
             sessionActive = false;
             input.disabled = false;
             sendBtn.disabled = false;
+            attachBtn.disabled = false;
             input.focus();
             setSpeaking(null);
             console.log('[council] Session ended');

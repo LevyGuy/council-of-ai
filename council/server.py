@@ -4,17 +4,19 @@ import logging
 import os
 import traceback
 from pathlib import Path
+from typing import Optional
 
 import markdown
 import uvicorn
-from fastapi import FastAPI
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from .config import AppConfig, filter_available_models, load_config
 from .models import ModelQueue
+from .rag import RagDocument, build_rag_context, extract_text
 from .session import run_session_events
 
 # ---------------------------------------------------------------------------
@@ -49,8 +51,14 @@ app = FastAPI(title="Council of AI")
 app.mount("/images", StaticFiles(directory=str(PROJECT_ROOT / "images")), name="images")
 
 
+class RagDocumentRequest(BaseModel):
+    filename: str
+    content: str
+
+
 class SessionRequest(BaseModel):
     query: str
+    rag_documents: Optional[list[RagDocumentRequest]] = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -59,10 +67,49 @@ async def serve_index():
     return FileResponse(str(PROJECT_ROOT / "index.html"))
 
 
+@app.post("/api/upload")
+async def upload_documents(files: list[UploadFile] = File(...)):
+    """Accept one or more files and return extracted text for each."""
+    results = []
+    for upload in files:
+        data = await upload.read()
+        content_type = upload.content_type or ""
+        filename = upload.filename or "unknown"
+        logger.info("Upload: %s (%s, %d bytes)", filename, content_type, len(data))
+        try:
+            doc = extract_text(filename, data, content_type)
+            results.append({
+                "filename": doc.filename,
+                "content": doc.content,
+                "truncated": doc.truncated,
+                "size": len(data),
+            })
+        except Exception as e:
+            logger.error("Failed to process %s: %s", filename, e)
+            results.append({
+                "filename": filename,
+                "content": "",
+                "truncated": False,
+                "size": len(data),
+                "error": str(e),
+            })
+
+    return JSONResponse({"documents": results})
+
+
 @app.post("/api/session")
 async def start_session(req: SessionRequest):
     """Start a council session and stream results as SSE."""
     logger.info("=== New session: query=%r ===", req.query)
+
+    # Build RAG context string from any attached documents
+    rag_docs: list[RagDocument] = []
+    if req.rag_documents:
+        for d in req.rag_documents:
+            rag_docs.append(RagDocument(filename=d.filename, content=d.content))
+        logger.info("RAG documents attached: %d", len(rag_docs))
+
+    rag_context = build_rag_context(rag_docs)
 
     queue = ModelQueue(config.models, shuffle=config.session.shuffle)
     logger.info("Panel order: %s", ", ".join(queue.order_names))
@@ -76,7 +123,9 @@ async def start_session(req: SessionRequest):
             event_count = 0
             try:
                 logger.debug("Background thread started")
-                for event in run_session_events(queue, req.query, config.session.max_iterations):
+                for event in run_session_events(
+                    queue, req.query, config.session.max_iterations, rag_context=rag_context
+                ):
                     event_count += 1
                     etype = event.get("type", "unknown")
                     if etype == "chunk":
