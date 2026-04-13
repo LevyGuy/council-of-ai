@@ -50,6 +50,14 @@ app = FastAPI(title="Council of AI")
 # Serve images
 app.mount("/images", StaticFiles(directory=str(PROJECT_ROOT / "images")), name="images")
 
+# Serve favicon files
+app.mount("/favicon", StaticFiles(directory=str(PROJECT_ROOT / "favicon")), name="favicon")
+
+
+@app.get("/site.webmanifest")
+async def serve_manifest():
+    return FileResponse(str(PROJECT_ROOT / "site.webmanifest"), media_type="application/manifest+json")
+
 
 class RagDocumentRequest(BaseModel):
     filename: str
