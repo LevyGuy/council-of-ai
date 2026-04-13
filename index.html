@@ -324,6 +324,7 @@
 
     let currentTurnEl = null;
     let sessionActive = false;
+    let conversationHistory = '';  // accumulated conversation context for follow-ups
 
     // ── Pretext streaming state ───────────────────────────────────
     let streamBuffer = '';           // accumulated raw text for current turn
@@ -359,7 +360,21 @@
         input.disabled = true;
         sendBtn.disabled = true;
         input.value = '';
-        output.innerHTML = '';
+
+        // For follow-ups, add a visual separator instead of clearing output
+        if (conversationHistory) {
+            const sep = document.createElement('div');
+            sep.className = 'flex items-center gap-3 my-5';
+            sep.innerHTML =
+                '<div class="h-px flex-grow bg-blue-200"></div>' +
+                `<span class="text-[9px] font-headline tracking-[0.3em] uppercase text-blue-500 font-bold">Follow-up: ${query}</span>` +
+                '<div class="h-px flex-grow bg-blue-200"></div>';
+            output.appendChild(sep);
+            output.scrollTop = output.scrollHeight;
+        } else {
+            output.innerHTML = '';
+        }
+
         currentTurnEl = null;
         setSpeaking(null);
 
@@ -378,7 +393,7 @@
             const resp = await fetch('/api/session', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({query}),
+                body: JSON.stringify({query, prior_conversation: conversationHistory}),
             });
             console.log('[council] Response status:', resp.status);
 
@@ -513,6 +528,12 @@
             case 'done': {
                 stopPretextRenderLoop();
                 setSpeaking(null);
+
+                // Save conversation context for follow-ups
+                if (event.conversation_text) {
+                    conversationHistory = event.conversation_text;
+                }
+
                 const footer = document.createElement('div');
                 footer.className = 'flex items-center gap-3 mt-6 mb-2';
                 footer.innerHTML =
@@ -521,6 +542,9 @@
                     '<div class="h-px flex-grow bg-green-200"></div>';
                 output.appendChild(footer);
                 output.scrollTop = output.scrollHeight;
+
+                // Update placeholder to hint follow-ups are possible
+                input.placeholder = 'ASK A FOLLOW-UP...';
                 break;
             }
         }

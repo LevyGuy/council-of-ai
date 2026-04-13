@@ -22,7 +22,16 @@ ROUND_TABLE_PREAMBLE = (
 )
 
 
-def _build_initial_system_prompt(model_name: str) -> str:
+def _build_initial_system_prompt(model_name: str, is_followup: bool = False) -> str:
+    if is_followup:
+        return (
+            f"Your name is {model_name}. The user has asked a follow-up question "
+            f"to a previous council discussion. The full prior conversation is provided for context. "
+            f"You are the first to respond to this follow-up — no one else has spoken yet on this new question. "
+            f"Answer the user's follow-up question directly, building on the prior discussion. "
+            f"Do NOT reference or address other models, as they have not said anything yet on this follow-up. "
+            f"Give a thorough but concise answer."
+        )
     return (
         f"Your name is {model_name}. A user has posed a question. "
         f"You are the first to respond — no one else has spoken yet. "
@@ -66,8 +75,15 @@ def _build_followup_system_prompt(first_model: str) -> str:
     )
 
 
-def _build_conversation_text(user_prompt: str, turns: list[Turn]) -> str:
-    parts = [f"User: {user_prompt}"]
+def _build_conversation_text(
+    user_prompt: str, turns: list[Turn], prior_conversation: str = ""
+) -> str:
+    parts = []
+    if prior_conversation:
+        parts.append(prior_conversation)
+        parts.append(f"User (follow-up): {user_prompt}")
+    else:
+        parts.append(f"User: {user_prompt}")
     for turn in turns:
         parts.append(f"{turn.model_name}: {turn.content}")
     return "\n\n".join(parts)
@@ -160,7 +176,8 @@ def _model_key(name: str) -> str:
 
 
 def run_session_events(
-    queue: ModelQueue, user_prompt: str, max_iterations: int
+    queue: ModelQueue, user_prompt: str, max_iterations: int,
+    prior_conversation: str = "",
 ) -> Generator[dict, None, None]:
     """Run a deliberation session, yielding SSE-friendly event dicts.
 
@@ -171,9 +188,13 @@ def run_session_events(
         chunk          — a text chunk from the streaming response
         turn_end       — full text of the completed turn
         error          — a model was skipped
-        done           — session complete, includes transcript
+        done           — session complete, includes transcript + conversation_text
     """
-    logger.info("run_session_events started: prompt=%r, max_iter=%d", user_prompt[:80], max_iterations)
+    is_followup = bool(prior_conversation)
+    logger.info(
+        "run_session_events started: prompt=%r, max_iter=%d, followup=%s",
+        user_prompt[:80], max_iterations, is_followup,
+    )
     transcript = Transcript(user_prompt=user_prompt, panel_order=queue.order_names)
     all_turns: list[Turn] = []
 
@@ -192,9 +213,14 @@ def run_session_events(
         if iteration_num == 1:
             # First model gives initial response
             first = queue.first
+            initial_content = (
+                _build_conversation_text(user_prompt, [], prior_conversation)
+                if is_followup
+                else user_prompt
+            )
             messages = [
-                Message(role="system", content=_build_initial_system_prompt(first.name)),
-                Message(role="user", content=user_prompt),
+                Message(role="system", content=_build_initial_system_prompt(first.name, is_followup)),
+                Message(role="user", content=initial_content),
             ]
 
             response = yield from _stream_model_events(first, messages, "Initial Response")
@@ -207,7 +233,7 @@ def run_session_events(
 
         # Reviewers
         for reviewer in queue.reviewers:
-            conversation_text = _build_conversation_text(user_prompt, all_turns)
+            conversation_text = _build_conversation_text(user_prompt, all_turns, prior_conversation)
             models_who_spoke = list(dict.fromkeys(t.model_name for t in all_turns))
             messages = [
                 Message(role="system", content=_build_review_system_prompt(reviewer.name, models_who_spoke)),
@@ -224,7 +250,7 @@ def run_session_events(
 
         # First model follow-up / summary
         first = queue.first
-        conversation_text = _build_conversation_text(user_prompt, all_turns)
+        conversation_text = _build_conversation_text(user_prompt, all_turns, prior_conversation)
         messages = [
             Message(role="system", content=_build_followup_system_prompt(first.name)),
             Message(role="user", content=conversation_text),
@@ -249,7 +275,9 @@ def run_session_events(
         iteration = Iteration(number=1, turns=list(all_turns))
         transcript.iterations.append(iteration)
 
-    yield {"type": "done", "transcript": transcript}
+    # Build the full conversation text so the client can use it for follow-ups
+    full_conversation = _build_conversation_text(user_prompt, all_turns, prior_conversation)
+    yield {"type": "done", "transcript": transcript, "conversation_text": full_conversation}
 
 
 def _stream_model_events(
