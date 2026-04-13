@@ -312,7 +312,9 @@
 <span class="font-['Manrope'] text-[8px] font-medium uppercase tracking-wider">Intelligence</span>
 </div>
 </nav> -->
-<script>
+<script type="module">
+    import {prepare, prepareWithSegments, layoutWithLines} from 'https://esm.sh/@chenglou/pretext@0.0.5';
+
     // ── DOM refs ──────────────────────────────────────────────────
     const output    = document.querySelector('.main-text');
     const input     = document.getElementById('query-input');
@@ -322,6 +324,13 @@
 
     let currentTurnEl = null;
     let sessionActive = false;
+
+    // ── Pretext streaming state ───────────────────────────────────
+    let streamBuffer = '';           // accumulated raw text for current turn
+    let rafId = null;                // requestAnimationFrame handle
+    let renderDirty = false;         // flag: new chunks arrived since last render
+    const PRETEXT_FONT = '14px Manrope';  // matches body font
+    const PRETEXT_LINE_HEIGHT = 1.625;    // matches leading-relaxed
 
     // ── Avatar focus ──────────────────────────────────────────────
     function setSpeaking(modelKey) {
@@ -460,26 +469,36 @@
 
                 // Streaming text container
                 currentTurnEl = document.createElement('div');
-                currentTurnEl.className = 'turn-content mb-4 whitespace-pre-wrap';
+                currentTurnEl.className = 'turn-content mb-4';
                 output.appendChild(currentTurnEl);
                 output.scrollTop = output.scrollHeight;
+
+                // Reset pretext streaming state for this turn
+                streamBuffer = '';
+                renderDirty = false;
+                startPretextRenderLoop();
                 break;
             }
 
             case 'chunk': {
                 if (currentTurnEl) {
-                    currentTurnEl.textContent += event.text;
-                    output.scrollTop = output.scrollHeight;
+                    streamBuffer += event.text;
+                    renderDirty = true;
+                    // No direct DOM mutation here — batched via rAF
                 }
                 break;
             }
 
             case 'turn_end': {
+                // Stop the render loop and swap in final HTML
+                stopPretextRenderLoop();
                 if (currentTurnEl && event.html) {
                     currentTurnEl.className = 'turn-content mb-4 prose prose-sm max-w-none';
                     currentTurnEl.innerHTML = event.html;
                     output.scrollTop = output.scrollHeight;
                 }
+                streamBuffer = '';
+                renderDirty = false;
                 break;
             }
 
@@ -492,6 +511,7 @@
             }
 
             case 'done': {
+                stopPretextRenderLoop();
                 setSpeaking(null);
                 const footer = document.createElement('div');
                 footer.className = 'flex items-center gap-3 mt-6 mb-2';
@@ -504,6 +524,53 @@
                 break;
             }
         }
+    }
+
+    // ── Pretext render loop ───────────────────────────────────────
+    // Instead of mutating the DOM on every SSE chunk (causing reflows),
+    // we accumulate text in `streamBuffer` and use pretext to compute
+    // line breaks via pure arithmetic, then batch-render once per frame.
+
+    function startPretextRenderLoop() {
+        stopPretextRenderLoop();
+        rafId = requestAnimationFrame(pretextRenderTick);
+    }
+
+    function stopPretextRenderLoop() {
+        if (rafId !== null) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+        }
+    }
+
+    function pretextRenderTick() {
+        if (renderDirty && currentTurnEl && streamBuffer.length > 0) {
+            renderDirty = false;
+
+            // Measure available width from the container
+            const maxWidth = currentTurnEl.clientWidth || 600;
+
+            // Use pretext to compute line-broken layout without DOM reflow
+            const prepared = prepareWithSegments(streamBuffer, PRETEXT_FONT, {
+                whiteSpace: 'pre-wrap',
+            });
+            const {lines} = layoutWithLines(prepared, maxWidth, PRETEXT_LINE_HEIGHT);
+
+            // Build all lines in a document fragment (single DOM write)
+            const fragment = document.createDocumentFragment();
+            for (const line of lines) {
+                const lineEl = document.createElement('div');
+                lineEl.textContent = line.text;
+                fragment.appendChild(lineEl);
+            }
+
+            // Single DOM mutation: replace all children at once
+            currentTurnEl.replaceChildren(fragment);
+            output.scrollTop = output.scrollHeight;
+        }
+
+        // Keep looping while streaming
+        rafId = requestAnimationFrame(pretextRenderTick);
     }
 </script>
 </body></html>
