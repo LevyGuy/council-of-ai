@@ -66,8 +66,15 @@ def _build_followup_system_prompt(first_model: str) -> str:
     )
 
 
-def _build_conversation_text(user_prompt: str, turns: list[Turn]) -> str:
-    parts = [f"User: {user_prompt}"]
+def _build_user_message(user_prompt: str, rag_context: str = "") -> str:
+    """Combine optional RAG context with the user's question."""
+    if rag_context:
+        return f"{rag_context}\n\nUser question: {user_prompt}"
+    return user_prompt
+
+
+def _build_conversation_text(user_prompt: str, turns: list[Turn], rag_context: str = "") -> str:
+    parts = [f"User: {_build_user_message(user_prompt, rag_context)}"]
     for turn in turns:
         parts.append(f"{turn.model_name}: {turn.content}")
     return "\n\n".join(parts)
@@ -160,7 +167,7 @@ def _model_key(name: str) -> str:
 
 
 def run_session_events(
-    queue: ModelQueue, user_prompt: str, max_iterations: int
+    queue: ModelQueue, user_prompt: str, max_iterations: int, rag_context: str = ""
 ) -> Generator[dict, None, None]:
     """Run a deliberation session, yielding SSE-friendly event dicts.
 
@@ -174,6 +181,9 @@ def run_session_events(
         done           — session complete, includes transcript
     """
     logger.info("run_session_events started: prompt=%r, max_iter=%d", user_prompt[:80], max_iterations)
+    if rag_context:
+        logger.info("RAG context attached: %d chars", len(rag_context))
+
     transcript = Transcript(user_prompt=user_prompt, panel_order=queue.order_names)
     all_turns: list[Turn] = []
 
@@ -190,11 +200,11 @@ def run_session_events(
         yield {"type": "iteration", "number": iteration_num, "max": max_iterations}
 
         if iteration_num == 1:
-            # First model gives initial response
+            # First model gives initial response — include RAG context in user message
             first = queue.first
             messages = [
                 Message(role="system", content=_build_initial_system_prompt(first.name)),
-                Message(role="user", content=user_prompt),
+                Message(role="user", content=_build_user_message(user_prompt, rag_context)),
             ]
 
             response = yield from _stream_model_events(first, messages, "Initial Response")
@@ -205,9 +215,9 @@ def run_session_events(
             all_turns.append(turn)
             iteration.turns.append(turn)
 
-        # Reviewers
+        # Reviewers — RAG context is threaded into the full conversation text
         for reviewer in queue.reviewers:
-            conversation_text = _build_conversation_text(user_prompt, all_turns)
+            conversation_text = _build_conversation_text(user_prompt, all_turns, rag_context)
             models_who_spoke = list(dict.fromkeys(t.model_name for t in all_turns))
             messages = [
                 Message(role="system", content=_build_review_system_prompt(reviewer.name, models_who_spoke)),
@@ -224,7 +234,7 @@ def run_session_events(
 
         # First model follow-up / summary
         first = queue.first
-        conversation_text = _build_conversation_text(user_prompt, all_turns)
+        conversation_text = _build_conversation_text(user_prompt, all_turns, rag_context)
         messages = [
             Message(role="system", content=_build_followup_system_prompt(first.name)),
             Message(role="user", content=conversation_text),
