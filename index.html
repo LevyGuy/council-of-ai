@@ -4,6 +4,7 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>Council of AIs</title>
+<!-- Auth0 SPA SDK (ESM — loaded in the module script below via import) -->
 <link rel="icon" type="image/x-icon" href="/favicon/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon/favicon-16x16.png"/>
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon/favicon-32x32.png"/>
@@ -179,6 +180,33 @@
     </style>
 </head>
 <body class="bg-surface font-body text-on-surface selection:bg-primary-container selection:text-on-primary-container h-screen overflow-hidden flex flex-col">
+
+<!-- ── Login overlay (shown when unauthenticated) ─────────────────────────── -->
+<div id="login-overlay" class="fixed inset-0 bg-surface z-50 flex flex-col items-center justify-center gap-6 hidden">
+  <div class="flex flex-col items-center gap-1">
+    <span class="font-headline text-2xl font-bold tracking-widest uppercase text-on-surface">Council of AIs</span>
+    <span class="text-xs text-outline tracking-widest uppercase">Multi-model deliberation</span>
+  </div>
+  <button id="login-btn"
+    class="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-xl font-headline text-sm tracking-widest uppercase hover:bg-primary-dim transition-colors active:scale-95">
+    <span class="material-symbols-outlined text-base" style="font-variation-settings:'FILL' 1">login</span>
+    Sign In
+  </button>
+  <p class="text-[10px] text-outline-variant max-w-xs text-center">
+    Sign in with your account to start querying the council.
+  </p>
+</div>
+
+<!-- ── User bar (top-right, shown when authenticated) ────────────────────── -->
+<div id="user-bar" class="hidden absolute top-3 right-4 z-40 flex items-center gap-2">
+  <img id="user-avatar" class="w-7 h-7 rounded-full bg-surface-container-highest object-cover hidden" alt="User avatar"/>
+  <span id="user-name" class="text-[10px] font-headline text-outline tracking-wider hidden"></span>
+  <button id="logout-btn"
+    class="text-[9px] font-headline tracking-widest uppercase text-outline hover:text-error transition-colors px-2 py-1 rounded border border-outline-variant/30 hover:border-error/30">
+    Sign out
+  </button>
+</div>
+
 <!-- TopAppBar - Slimmer -->
 <!-- <header class="bg-[#f5f7f9] dark:bg-slate-900 flex justify-between items-center w-full px-8 py-2 sticky top-0 z-40 border-b border-outline-variant/10"> -->
 <!-- <div class="text-base font-bold tracking-widest text-[#2c2f31] dark:text-white font-['Space_Grotesk'] uppercase">
@@ -293,6 +321,90 @@
 </nav> -->
 <script type="module">
     import {prepare, prepareWithSegments, layoutWithLines} from 'https://esm.sh/@chenglou/pretext@0.0.5';
+    import { createAuth0Client } from 'https://esm.sh/@auth0/auth0-spa-js@2';
+
+    // ── Cloud configuration ───────────────────────────────────────
+    // Replace these four values before uploading to Dreamhost.
+    // Do NOT commit real credentials to version control.
+    const AUTH0_DOMAIN   = 'REPLACE_WITH_YOUR_AUTH0_DOMAIN';    // e.g. 'your-tenant.us.auth0.com'
+    const AUTH0_CLIENT_ID = 'REPLACE_WITH_YOUR_AUTH0_CLIENT_ID'; // e.g. 'abc123XYZ...'
+    const AUTH0_AUDIENCE = 'REPLACE_WITH_YOUR_AUTH0_AUDIENCE';   // e.g. 'https://council-api'
+    const API_BASE_URL   = 'REPLACE_WITH_YOUR_WORKERS_URL';      // e.g. 'https://council-of-ai.yourname.workers.dev'
+
+    // ── Auth0 client ──────────────────────────────────────────────
+    let auth0Client = null;
+
+    async function initAuth() {
+        auth0Client = await createAuth0Client({
+            domain: AUTH0_DOMAIN,
+            clientId: AUTH0_CLIENT_ID,
+            authorizationParams: {
+                audience: AUTH0_AUDIENCE,
+                redirect_uri: window.location.origin + window.location.pathname,
+            },
+        });
+
+        // Handle OAuth redirect callback
+        if (window.location.search.includes('code=') && window.location.search.includes('state=')) {
+            await auth0Client.handleRedirectCallback();
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
+        const isAuthenticated = await auth0Client.isAuthenticated();
+        if (isAuthenticated) {
+            await onAuthenticated();
+        } else {
+            showLoginOverlay();
+        }
+    }
+
+    async function getToken() {
+        if (!auth0Client) throw new Error('Auth not initialised');
+        return await auth0Client.getTokenSilently();
+    }
+
+    async function onAuthenticated() {
+        hideLoginOverlay();
+        const user = await auth0Client.getUser();
+        if (user) {
+            const avatarEl = document.getElementById('user-avatar');
+            const nameEl   = document.getElementById('user-name');
+            if (user.picture) { avatarEl.src = user.picture; avatarEl.classList.remove('hidden'); }
+            if (user.name || user.email) {
+                nameEl.textContent = user.name || user.email;
+                nameEl.classList.remove('hidden');
+            }
+        }
+        document.getElementById('user-bar').classList.remove('hidden');
+
+        // Register the user in D1 on first sign-in (fire-and-forget)
+        try {
+            const token = await getToken();
+            await fetch(`${API_BASE_URL}/api/user`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+        } catch (e) {
+            console.warn('[council] User registration call failed:', e);
+        }
+    }
+
+    function showLoginOverlay() {
+        document.getElementById('login-overlay').classList.remove('hidden');
+    }
+
+    function hideLoginOverlay() {
+        document.getElementById('login-overlay').classList.add('hidden');
+    }
+
+    document.getElementById('login-btn').addEventListener('click', () => {
+        auth0Client.loginWithRedirect();
+    });
+
+    document.getElementById('logout-btn').addEventListener('click', () => {
+        auth0Client.logout({
+            logoutParams: { returnTo: window.location.origin + window.location.pathname },
+        });
+    });
 
     // ── DOM refs ──────────────────────────────────────────────────
     const output    = document.querySelector('.main-text');
@@ -352,7 +464,12 @@
             const form = new FormData();
             for (const f of files) form.append('files', f);
 
-            const resp = await fetch('/api/upload', { method: 'POST', body: form });
+            const token = await getToken();
+            const resp = await fetch(`${API_BASE_URL}/api/upload`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+                body: form,
+            });
             if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
             const { documents } = await resp.json();
 
@@ -442,9 +559,13 @@
             if (ragDocs.length > 0) {
                 body.rag_documents = ragDocs.map(d => ({ filename: d.filename, content: d.content }));
             }
-            const resp = await fetch('/api/session', {
+            const token = await getToken();
+            const resp = await fetch(`${API_BASE_URL}/api/session`, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                },
                 body: JSON.stringify({...body, prior_conversation: conversationHistory}),
             });
             console.log('[council] Response status:', resp.status);
@@ -649,5 +770,13 @@
         // Keep looping while streaming
         rafId = requestAnimationFrame(pretextRenderTick);
     }
+
+    // ── Bootstrap ─────────────────────────────────────────────────
+    // Show login overlay immediately so there's no flash of unprotected UI,
+    // then initialise Auth0 which will hide it once authenticated.
+    showLoginOverlay();
+    initAuth().catch(err => {
+        console.error('[council] Auth init failed:', err);
+    });
 </script>
 </body></html>
