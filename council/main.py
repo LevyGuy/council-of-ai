@@ -44,7 +44,19 @@ def main():
     display.show_header(queue.order_names)
 
     try:
-        user_prompt = console.input("[bold white]You: [/bold white]")
+        first_line = console.input("[bold white]You: [/bold white]")
+        if first_line.startswith('"""'):
+            # Multi-line mode: collect lines until closing """
+            lines = [first_line[3:]]  # strip opening """
+            while True:
+                line = console.input("")
+                if line.rstrip().endswith('"""'):
+                    lines.append(line.rstrip()[:-3])  # strip closing """
+                    break
+                lines.append(line)
+            user_prompt = "\n".join(lines).strip()
+        else:
+            user_prompt = first_line
     except EOFError:
         return
 
