@@ -201,11 +201,33 @@
 <div id="user-bar" class="hidden absolute top-3 right-4 z-40 flex items-center gap-2">
   <img id="user-avatar" class="w-7 h-7 rounded-full bg-surface-container-highest object-cover hidden" alt="User avatar"/>
   <span id="user-name" class="text-[10px] font-headline text-outline tracking-wider hidden"></span>
+  <button id="history-btn" title="Conversation history"
+    class="text-outline hover:text-on-surface transition-colors p-1 rounded">
+    <span class="material-symbols-outlined text-lg">history</span>
+  </button>
   <button id="logout-btn"
     class="text-[9px] font-headline tracking-widest uppercase text-outline hover:text-error transition-colors px-2 py-1 rounded border border-outline-variant/30 hover:border-error/30">
     Sign out
   </button>
 </div>
+
+<!-- ── History sidebar ──────────────────────────────────────────────────────── -->
+<div id="history-backdrop" class="fixed inset-0 bg-black/20 z-30 hidden"></div>
+<aside id="history-panel"
+  class="fixed top-0 right-0 h-full w-80 sm:w-96 bg-surface-container-lowest border-l border-outline-variant/20 shadow-2xl z-40 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
+  <div class="flex items-center justify-between px-4 py-3 border-b border-outline-variant/20 shrink-0">
+    <span class="font-headline text-xs font-bold tracking-widest uppercase text-on-surface">History</span>
+    <button id="history-close" class="text-outline hover:text-on-surface transition-colors p-1 rounded">
+      <span class="material-symbols-outlined text-lg">close</span>
+    </button>
+  </div>
+  <div id="history-list" class="flex-grow overflow-y-auto custom-scrollbar px-3 py-2 flex flex-col gap-2">
+    <div id="history-loading" class="text-center text-outline text-xs py-12">Loading…</div>
+    <div id="history-empty" class="hidden text-center text-outline text-xs py-12 leading-relaxed">
+      No conversations yet.<br/>Start a session to build your history.
+    </div>
+  </div>
+</aside>
 
 <!-- TopAppBar - Slimmer -->
 <!-- <header class="bg-[#f5f7f9] dark:bg-slate-900 flex justify-between items-center w-full px-8 py-2 sticky top-0 z-40 border-b border-outline-variant/10"> -->
@@ -405,6 +427,173 @@
             logoutParams: { returnTo: window.location.origin + window.location.pathname },
         });
     });
+
+    // ── History panel ─────────────────────────────────────────────
+    const historyPanel    = document.getElementById('history-panel');
+    const historyBackdrop = document.getElementById('history-backdrop');
+    const historyList     = document.getElementById('history-list');
+    const historyEmpty    = document.getElementById('history-empty');
+    const historyLoading  = document.getElementById('history-loading');
+    let historyOpen = false;
+
+    function openHistoryPanel() {
+        historyOpen = true;
+        historyPanel.classList.remove('translate-x-full');
+        historyBackdrop.classList.remove('hidden');
+        loadHistory();
+    }
+
+    function closeHistoryPanel() {
+        historyOpen = false;
+        historyPanel.classList.add('translate-x-full');
+        historyBackdrop.classList.add('hidden');
+    }
+
+    document.getElementById('history-btn').addEventListener('click', () => {
+        historyOpen ? closeHistoryPanel() : openHistoryPanel();
+    });
+    document.getElementById('history-close').addEventListener('click', closeHistoryPanel);
+    document.getElementById('history-backdrop').addEventListener('click', closeHistoryPanel);
+
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function formatRelativeDate(epochSeconds) {
+        const diff = (Date.now() / 1000) - epochSeconds;
+        if (diff < 60)     return 'Just now';
+        if (diff < 3600)   return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400)  return `${Math.floor(diff / 3600)}h ago`;
+        if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+        return new Date(epochSeconds * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    }
+
+    const MODEL_PILL_CLASS = {
+        Claude: 'bg-secondary-container text-on-secondary-container',
+        GPT:    'bg-tertiary-container text-on-tertiary-container',
+        Gemini: 'bg-primary-container text-on-primary-container',
+        Grok:   'bg-surface-container-high text-on-surface-variant',
+    };
+
+    async function loadHistory() {
+        historyLoading.classList.remove('hidden');
+        historyEmpty.classList.add('hidden');
+        historyList.querySelectorAll('.session-card').forEach(c => c.remove());
+
+        try {
+            const token = await getToken();
+            const resp  = await fetch(`${API_BASE_URL}/api/sessions`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const sessions = await resp.json();
+            historyLoading.classList.add('hidden');
+
+            if (!sessions.length) {
+                historyEmpty.classList.remove('hidden');
+                return;
+            }
+
+            for (const s of sessions) {
+                const models = JSON.parse(s.model_names || '[]');
+                const pills  = models.map(m => {
+                    const cls = MODEL_PILL_CLASS[m] || 'bg-surface-container text-on-surface-variant';
+                    return `<span class="text-[7px] font-headline tracking-wide px-1.5 py-0.5 rounded-full ${cls}">${escapeHtml(m)}</span>`;
+                }).join('');
+
+                const card = document.createElement('div');
+                card.className = 'session-card group relative bg-surface-container rounded-lg p-3 cursor-pointer hover:bg-surface-container-high transition-colors border border-outline-variant/10';
+                card.dataset.id = s.id;
+                card.innerHTML = `
+                    <div class="flex items-start justify-between gap-2">
+                        <p class="text-xs font-headline text-on-surface leading-snug line-clamp-2 flex-grow pr-1">${escapeHtml(s.title)}</p>
+                        <button class="delete-btn shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-outline hover:text-error p-0.5 rounded" title="Delete">
+                            <span class="material-symbols-outlined text-base">delete</span>
+                        </button>
+                    </div>
+                    <div class="flex items-center gap-1.5 mt-2 flex-wrap">
+                        <span class="text-[9px] text-outline">${formatRelativeDate(s.created_at)}</span>
+                        <span class="text-[9px] text-outline">·</span>
+                        <span class="text-[9px] text-outline">${s.iterations} round${s.iterations !== 1 ? 's' : ''}</span>
+                        <div class="flex gap-1 ml-auto">${pills}</div>
+                    </div>`;
+
+                card.addEventListener('click', async (e) => {
+                    if (e.target.closest('.delete-btn')) return;
+                    await resumeSession(s.id, s.title);
+                });
+
+                card.querySelector('.delete-btn').addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    await deleteHistorySession(s.id, card);
+                });
+
+                historyList.appendChild(card);
+            }
+        } catch (err) {
+            historyLoading.classList.add('hidden');
+            historyEmpty.textContent = 'Failed to load history.';
+            historyEmpty.classList.remove('hidden');
+            console.error('[council] History load error:', err);
+        }
+    }
+
+    async function resumeSession(sessionId, title) {
+        closeHistoryPanel();
+        if (sessionActive) return;
+
+        try {
+            const token = await getToken();
+            const resp  = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const session = await resp.json();
+
+            // Restore prior-conversation context so the next query is a follow-up
+            conversationHistory = session.conversation_text;
+
+            // Show a resume banner in the output area
+            output.innerHTML = '';
+            const banner = document.createElement('div');
+            banner.className = 'flex items-center gap-3 mb-3';
+            const shortTitle = escapeHtml(title.length > 70 ? title.slice(0, 70) + '…' : title);
+            banner.innerHTML =
+                '<div class="h-px flex-grow bg-secondary-container"></div>' +
+                `<span class="text-[9px] font-headline tracking-[0.25em] uppercase text-secondary font-bold whitespace-nowrap">Resumed · ${shortTitle}</span>` +
+                '<div class="h-px flex-grow bg-secondary-container"></div>';
+            output.appendChild(banner);
+
+            const hint = document.createElement('p');
+            hint.className = 'text-xs text-outline text-center italic mt-1 mb-3';
+            hint.textContent = 'Prior conversation loaded — ask a follow-up question below.';
+            output.appendChild(hint);
+
+            input.placeholder = 'ASK A FOLLOW-UP...';
+            input.focus();
+        } catch (err) {
+            console.error('[council] Failed to resume session:', err);
+        }
+    }
+
+    async function deleteHistorySession(sessionId, cardEl) {
+        try {
+            const token = await getToken();
+            await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            cardEl.remove();
+            if (!historyList.querySelector('.session-card')) {
+                historyEmpty.textContent = 'No conversations yet.\nStart a session to build your history.';
+                historyEmpty.classList.remove('hidden');
+            }
+        } catch (err) {
+            console.error('[council] Failed to delete session:', err);
+        }
+    }
 
     // ── DOM refs ──────────────────────────────────────────────────
     const output    = document.querySelector('.main-text');
@@ -719,6 +908,9 @@
 
                 // Update placeholder to hint follow-ups are possible
                 input.placeholder = 'ASK A FOLLOW-UP...';
+
+                // Refresh history list if the panel is open
+                if (historyOpen) loadHistory();
                 break;
             }
         }

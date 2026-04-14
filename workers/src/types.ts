@@ -54,3 +54,18 @@ export interface User {
   created_at: number; // Unix epoch seconds
   last_login: number;
 }
+
+// ── Persisted session record (D1) ────────────────────────────────────────────
+export interface SessionRecord {
+  id: string;
+  user_id: string;
+  title: string;              // query truncated to 120 chars
+  query: string;              // full original query
+  conversation_text: string;  // full prior-conversation text fed back to LLMs
+  model_names: string;        // JSON-encoded string[], e.g. '["Claude","GPT"]'
+  iterations: number;
+  created_at: number;         // Unix epoch seconds
+}
+
+// Lightweight list view (conversation_text omitted for list responses)
+export type SessionListItem = Omit<SessionRecord, 'conversation_text' | 'query'>;

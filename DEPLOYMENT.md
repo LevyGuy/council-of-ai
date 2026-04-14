@@ -103,13 +103,15 @@ database_name = "council-of-ai"
 database_id = "PASTE_YOUR_DATABASE_ID_HERE"
 ```
 
-### 2.4 Run the database migration
+### 2.4 Run the database migrations
 
 ```bash
 npm run migrate:remote
 ```
 
-This creates the `users` table in your D1 database.
+This applies both migrations in order:
+- `0001_create_users.sql` — stores Auth0 user accounts
+- `0002_create_sessions.sql` — stores conversation history for each user
 
 ### 2.5 Set non-secret config in wrangler.toml
 
