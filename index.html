@@ -349,18 +349,37 @@
     import {prepare, prepareWithSegments, layoutWithLines} from 'https://esm.sh/@chenglou/pretext@0.0.5';
     import { createAuth0Client } from 'https://esm.sh/@auth0/auth0-spa-js@2';
 
+    // ── Environment detection ─────────────────────────────────────
+    // When running via `python -m council --web` the page is served from
+    // localhost.  In that mode we skip Auth0 entirely and talk directly to
+    // the local Python server (same-origin relative URLs, no auth headers).
+    const IS_LOCAL = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+
     // ── Cloud configuration ───────────────────────────────────────
     // Replace these four values before uploading to Dreamhost.
     // Do NOT commit real credentials to version control.
-    const AUTH0_DOMAIN   = 'REPLACE_WITH_YOUR_AUTH0_DOMAIN';    // e.g. 'your-tenant.us.auth0.com'
+    // These are ignored when IS_LOCAL is true.
+    const AUTH0_DOMAIN    = 'REPLACE_WITH_YOUR_AUTH0_DOMAIN';    // e.g. 'your-tenant.us.auth0.com'
     const AUTH0_CLIENT_ID = 'REPLACE_WITH_YOUR_AUTH0_CLIENT_ID'; // e.g. 'abc123XYZ...'
-    const AUTH0_AUDIENCE = 'REPLACE_WITH_YOUR_AUTH0_AUDIENCE';   // e.g. 'https://council-api'
-    const API_BASE_URL   = 'REPLACE_WITH_YOUR_WORKERS_URL';      // e.g. 'https://council-of-ai.yourname.workers.dev'
+    const AUTH0_AUDIENCE  = 'REPLACE_WITH_YOUR_AUTH0_AUDIENCE';  // e.g. 'https://council-api'
+    // Local: '' → relative URLs go to the same-origin Python server.
+    // Cloud: full Cloudflare Workers URL.
+    const API_BASE_URL    = IS_LOCAL ? '' : 'REPLACE_WITH_YOUR_WORKERS_URL';
 
     // ── Auth0 client ──────────────────────────────────────────────
     let auth0Client = null;
 
     async function initAuth() {
+        if (IS_LOCAL) {
+            // Skip Auth0 in local dev — show the UI directly.
+            hideLoginOverlay();
+            document.getElementById('user-bar').classList.remove('hidden');
+            document.getElementById('user-name').textContent = 'Local dev';
+            // History requires the cloud DB; hide the button locally.
+            document.getElementById('history-btn').classList.add('hidden');
+            return;
+        }
+
         auth0Client = await createAuth0Client({
             domain: AUTH0_DOMAIN,
             clientId: AUTH0_CLIENT_ID,
@@ -384,9 +403,17 @@
         }
     }
 
+    // Returns the Auth0 access token, or null in local dev (no auth needed).
     async function getToken() {
+        if (IS_LOCAL) return null;
         if (!auth0Client) throw new Error('Auth not initialised');
         return await auth0Client.getTokenSilently();
+    }
+
+    // Builds the Authorization header object — empty in local dev.
+    async function authHeaders() {
+        const token = await getToken();
+        return token ? { Authorization: `Bearer ${token}` } : {};
     }
 
     async function onAuthenticated() {
@@ -397,19 +424,15 @@
             const nameEl   = document.getElementById('user-name');
             if (user.picture) { avatarEl.src = user.picture; avatarEl.classList.remove('hidden'); }
             if (user.name || user.email) {
-                // Just set the text — the CSS class "hidden sm:inline" already
-                // hides the name on mobile and shows it on sm+ screens.
+                // CSS class "hidden sm:inline" hides name on mobile, shows on sm+.
                 nameEl.textContent = user.name || user.email;
             }
         }
         document.getElementById('user-bar').classList.remove('hidden');
 
-        // Register the user in D1 on first sign-in (fire-and-forget)
+        // Register the user in D1 on first sign-in (fire-and-forget).
         try {
-            const token = await getToken();
-            await fetch(`${API_BASE_URL}/api/user`, {
-                headers: { Authorization: `Bearer ${token}` },
-            });
+            await fetch(`${API_BASE_URL}/api/user`, { headers: await authHeaders() });
         } catch (e) {
             console.warn('[council] User registration call failed:', e);
         }
@@ -424,13 +447,15 @@
     }
 
     document.getElementById('login-btn').addEventListener('click', () => {
-        auth0Client.loginWithRedirect();
+        if (auth0Client) auth0Client.loginWithRedirect();
     });
 
     document.getElementById('logout-btn').addEventListener('click', () => {
-        auth0Client.logout({
-            logoutParams: { returnTo: window.location.origin + window.location.pathname },
-        });
+        if (auth0Client) {
+            auth0Client.logout({
+                logoutParams: { returnTo: window.location.origin + window.location.pathname },
+            });
+        }
     });
 
     // ── History panel ─────────────────────────────────────────────
@@ -488,9 +513,8 @@
         historyList.querySelectorAll('.session-card').forEach(c => c.remove());
 
         try {
-            const token = await getToken();
             const resp  = await fetch(`${API_BASE_URL}/api/sessions`, {
-                headers: { Authorization: `Bearer ${token}` },
+                headers: await authHeaders(),
             });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const sessions = await resp.json();
@@ -550,9 +574,8 @@
         if (sessionActive) return;
 
         try {
-            const token = await getToken();
             const resp  = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`, {
-                headers: { Authorization: `Bearer ${token}` },
+                headers: await authHeaders(),
             });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const session = await resp.json();
@@ -585,10 +608,9 @@
 
     async function deleteHistorySession(sessionId, cardEl) {
         try {
-            const token = await getToken();
             await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`, {
                 method: 'DELETE',
-                headers: { Authorization: `Bearer ${token}` },
+                headers: await authHeaders(),
             });
             cardEl.remove();
             if (!historyList.querySelector('.session-card')) {
@@ -658,10 +680,9 @@
             const form = new FormData();
             for (const f of files) form.append('files', f);
 
-            const token = await getToken();
             const resp = await fetch(`${API_BASE_URL}/api/upload`, {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
+                headers: await authHeaders(),
                 body: form,
             });
             if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
@@ -753,13 +774,9 @@
             if (ragDocs.length > 0) {
                 body.rag_documents = ragDocs.map(d => ({ filename: d.filename, content: d.content }));
             }
-            const token = await getToken();
             const resp = await fetch(`${API_BASE_URL}/api/session`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                },
+                headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
                 body: JSON.stringify({...body, prior_conversation: conversationHistory}),
             });
             console.log('[council] Response status:', resp.status);
