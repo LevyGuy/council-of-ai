@@ -198,27 +198,31 @@
 </div>
 
 <!-- ── User bar (top-right, shown when authenticated) ────────────────────── -->
-<div id="user-bar" class="hidden absolute top-3 right-4 z-40 flex items-center gap-2">
+<div id="user-bar" class="hidden absolute top-2.5 right-3 z-40 flex items-center gap-1.5">
   <img id="user-avatar" class="w-7 h-7 rounded-full bg-surface-container-highest object-cover hidden" alt="User avatar"/>
-  <span id="user-name" class="text-[10px] font-headline text-outline tracking-wider hidden"></span>
+  <!-- Name hidden on mobile; shown only on sm+ to avoid overflow -->
+  <span id="user-name" class="hidden sm:inline text-[10px] font-headline text-outline tracking-wider max-w-[120px] truncate"></span>
   <button id="history-btn" title="Conversation history"
-    class="text-outline hover:text-on-surface transition-colors p-1 rounded">
-    <span class="material-symbols-outlined text-lg">history</span>
+    class="text-outline hover:text-on-surface transition-colors p-2 rounded min-w-[36px] min-h-[36px] flex items-center justify-center">
+    <span class="material-symbols-outlined text-lg leading-none">history</span>
   </button>
-  <button id="logout-btn"
-    class="text-[9px] font-headline tracking-widest uppercase text-outline hover:text-error transition-colors px-2 py-1 rounded border border-outline-variant/30 hover:border-error/30">
-    Sign out
+  <!-- Desktop: text + border; mobile: icon-only logout -->
+  <button id="logout-btn" title="Sign out"
+    class="text-outline hover:text-error transition-colors flex items-center gap-1 px-2 py-1.5 rounded border border-outline-variant/30 hover:border-error/30 min-h-[36px]">
+    <span class="material-symbols-outlined text-base leading-none">logout</span>
+    <span class="hidden sm:inline text-[9px] font-headline tracking-widest uppercase">Sign out</span>
   </button>
 </div>
 
 <!-- ── History sidebar ──────────────────────────────────────────────────────── -->
-<div id="history-backdrop" class="fixed inset-0 bg-black/20 z-30 hidden"></div>
+<div id="history-backdrop" class="fixed inset-0 bg-black/30 z-30 hidden"></div>
 <aside id="history-panel"
-  class="fixed top-0 right-0 h-full w-80 sm:w-96 bg-surface-container-lowest border-l border-outline-variant/20 shadow-2xl z-40 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
+  class="fixed top-0 right-0 h-full w-full sm:w-96 bg-surface-container-lowest border-l border-outline-variant/20 shadow-2xl z-40 flex flex-col translate-x-full transition-transform duration-300 ease-in-out">
   <div class="flex items-center justify-between px-4 py-3 border-b border-outline-variant/20 shrink-0">
     <span class="font-headline text-xs font-bold tracking-widest uppercase text-on-surface">History</span>
-    <button id="history-close" class="text-outline hover:text-on-surface transition-colors p-1 rounded">
-      <span class="material-symbols-outlined text-lg">close</span>
+    <button id="history-close"
+      class="text-outline hover:text-on-surface transition-colors p-2 rounded min-w-[44px] min-h-[44px] flex items-center justify-center">
+      <span class="material-symbols-outlined text-xl leading-none">close</span>
     </button>
   </div>
   <div id="history-list" class="flex-grow overflow-y-auto custom-scrollbar px-3 py-2 flex flex-col gap-2">
@@ -393,8 +397,9 @@
             const nameEl   = document.getElementById('user-name');
             if (user.picture) { avatarEl.src = user.picture; avatarEl.classList.remove('hidden'); }
             if (user.name || user.email) {
+                // Just set the text — the CSS class "hidden sm:inline" already
+                // hides the name on mobile and shows it on sm+ screens.
                 nameEl.textContent = user.name || user.email;
-                nameEl.classList.remove('hidden');
             }
         }
         document.getElementById('user-bar').classList.remove('hidden');
@@ -504,16 +509,16 @@
                 }).join('');
 
                 const card = document.createElement('div');
-                card.className = 'session-card group relative bg-surface-container rounded-lg p-3 cursor-pointer hover:bg-surface-container-high transition-colors border border-outline-variant/10';
+                card.className = 'session-card group relative bg-surface-container rounded-lg px-3 py-3 cursor-pointer hover:bg-surface-container-high active:bg-surface-container-high transition-colors border border-outline-variant/10 min-h-[64px]';
                 card.dataset.id = s.id;
                 card.innerHTML = `
                     <div class="flex items-start justify-between gap-2">
                         <p class="text-xs font-headline text-on-surface leading-snug line-clamp-2 flex-grow pr-1">${escapeHtml(s.title)}</p>
-                        <button class="delete-btn shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-outline hover:text-error p-0.5 rounded" title="Delete">
-                            <span class="material-symbols-outlined text-base">delete</span>
+                        <button class="delete-btn shrink-0 opacity-40 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity text-outline hover:text-error active:text-error p-2 -mr-1.5 -mt-0.5 rounded min-w-[36px] min-h-[36px] flex items-center justify-center" title="Delete">
+                            <span class="material-symbols-outlined text-base leading-none">delete</span>
                         </button>
                     </div>
-                    <div class="flex items-center gap-1.5 mt-2 flex-wrap">
+                    <div class="flex items-center gap-1.5 mt-1 flex-wrap">
                         <span class="text-[9px] text-outline">${formatRelativeDate(s.created_at)}</span>
                         <span class="text-[9px] text-outline">·</span>
                         <span class="text-[9px] text-outline">${s.iterations} round${s.iterations !== 1 ? 's' : ''}</span>
