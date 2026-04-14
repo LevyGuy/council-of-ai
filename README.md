@@ -2,6 +2,15 @@
 
 A CLI application that orchestrates multi-LLM deliberation sessions. Pose a question and a panel of AI models will respond, review each other's answers, grade accuracy, and iterate until consensus.
 
+## Web UI
+
+![Council of AIs Web UI](screenshots/web-ui.png)
+
+## Command line interface
+
+![Council of AIs CLI](screenshots/cli.png)
+
+
 ## How It Works
 
 1. You enter a prompt.
