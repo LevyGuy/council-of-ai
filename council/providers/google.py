@@ -28,6 +28,7 @@ class GoogleProvider(Provider):
         config = types.GenerateContentConfig(
             max_output_tokens=2048,
             system_instruction=system_instruction,
+            thinking_config=types.ThinkingConfig(thinking_budget=1024),
         )
         response = self.client.models.generate_content(
             model=self.model_id,
@@ -41,6 +42,7 @@ class GoogleProvider(Provider):
         config = types.GenerateContentConfig(
             max_output_tokens=2048,
             system_instruction=system_instruction,
+            thinking_config=types.ThinkingConfig(thinking_budget=1024),
         )
         for chunk in self.client.models.generate_content_stream(
             model=self.model_id,
