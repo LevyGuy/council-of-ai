@@ -361,7 +361,6 @@
     // These are ignored when IS_LOCAL is true.
     const AUTH0_DOMAIN    = 'REPLACE_WITH_YOUR_AUTH0_DOMAIN';    // e.g. 'your-tenant.us.auth0.com'
     const AUTH0_CLIENT_ID = 'REPLACE_WITH_YOUR_AUTH0_CLIENT_ID'; // e.g. 'abc123XYZ...'
-    const AUTH0_AUDIENCE  = 'REPLACE_WITH_YOUR_AUTH0_AUDIENCE';  // e.g. 'https://council-api'
     // Local: '' → relative URLs go to the same-origin Python server.
     // Cloud: full Cloudflare Workers URL.
     const API_BASE_URL    = IS_LOCAL ? '' : 'REPLACE_WITH_YOUR_WORKERS_URL';
@@ -384,7 +383,6 @@
             domain: AUTH0_DOMAIN,
             clientId: AUTH0_CLIENT_ID,
             authorizationParams: {
-                audience: AUTH0_AUDIENCE,
                 redirect_uri: window.location.origin + window.location.pathname,
             },
         });
@@ -403,11 +401,16 @@
         }
     }
 
-    // Returns the Auth0 access token, or null in local dev (no auth needed).
+    // Returns the raw Auth0 ID token JWT, or null in local dev.
+    // We use the ID token (not the access token) to avoid needing a custom
+    // Auth0 API resource — the ID token is always issued and its audience
+    // is simply the client ID, which the Worker validates against.
     async function getToken() {
         if (IS_LOCAL) return null;
         if (!auth0Client) throw new Error('Auth not initialised');
-        return await auth0Client.getTokenSilently();
+        const claims = await auth0Client.getIdTokenClaims();
+        if (!claims) throw new Error('No ID token available');
+        return claims.__raw;
     }
 
     // Builds the Authorization header object — empty in local dev.

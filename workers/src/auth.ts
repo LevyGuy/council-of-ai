@@ -9,9 +9,11 @@ export interface AuthPayload {
 }
 
 /**
- * Validates an Auth0 Bearer JWT from the request's Authorization header.
- * Uses Auth0's JWKS endpoint and the Web Crypto API (via jose).
- * Throws if the token is missing, malformed, or invalid.
+ * Validates an Auth0 ID token (Bearer JWT) from the request's Authorization
+ * header.  The frontend sends the ID token rather than an access token, which
+ * avoids the need to create and authorize a custom Auth0 API resource.
+ *
+ * ID-token audience claim == the Auth0 SPA client ID.
  */
 export async function validateToken(request: Request, env: Env): Promise<AuthPayload> {
   const authHeader = request.headers.get('Authorization');
@@ -21,14 +23,13 @@ export async function validateToken(request: Request, env: Env): Promise<AuthPay
 
   const token = authHeader.slice(7);
 
-  // Fetch the public key set from Auth0 (cached by the jose library)
   const JWKS = jose.createRemoteJWKSet(
     new URL(`https://${env.AUTH0_DOMAIN}/.well-known/jwks.json`),
   );
 
   const { payload } = await jose.jwtVerify(token, JWKS, {
     issuer: `https://${env.AUTH0_DOMAIN}/`,
-    audience: env.AUTH0_AUDIENCE,
+    audience: env.AUTH0_CLIENT_ID, // ID token aud == client ID
   });
 
   if (!payload.sub) {

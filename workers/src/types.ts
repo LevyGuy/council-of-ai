@@ -4,8 +4,8 @@ export interface Env {
   DB: D1Database;
 
   // Auth0 — set in [vars] in wrangler.toml
-  AUTH0_DOMAIN: string;   // e.g. "your-tenant.us.auth0.com"
-  AUTH0_AUDIENCE: string; // e.g. "https://council-api"
+  AUTH0_DOMAIN: string;    // e.g. "your-tenant.us.auth0.com"
+  AUTH0_CLIENT_ID: string; // Auth0 SPA client ID — used as the ID-token audience
 
   // CORS allowed origin — your Dreamhost domain
   ALLOWED_ORIGIN: string; // e.g. "https://yoursite.com"

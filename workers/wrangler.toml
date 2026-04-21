@@ -11,9 +11,9 @@ database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 [vars]
 # Replace these with your actual values before deploying.
 # Non-secret config lives here; API keys go in via `wrangler secret put`.
-AUTH0_DOMAIN = "REPLACE_WITH_YOUR_AUTH0_DOMAIN"       # e.g. your-tenant.us.auth0.com
-AUTH0_AUDIENCE = "REPLACE_WITH_YOUR_AUTH0_AUDIENCE"   # e.g. https://council-api
-ALLOWED_ORIGIN = "REPLACE_WITH_YOUR_DREAMHOST_DOMAIN" # e.g. https://yoursite.com
+AUTH0_DOMAIN    = "REPLACE_WITH_YOUR_AUTH0_DOMAIN"    # e.g. your-tenant.us.auth0.com
+AUTH0_CLIENT_ID = "REPLACE_WITH_YOUR_AUTH0_CLIENT_ID" # e.g. Z9pXFtSBrPCF4QthinP8KIiiX7EaCKaH
+ALLOWED_ORIGIN  = "REPLACE_WITH_YOUR_DREAMHOST_DOMAIN" # e.g. https://yoursite.com
 
 # Secrets set via CLI (never commit these):
 #   wrangler secret put ANTHROPIC_API_KEY
