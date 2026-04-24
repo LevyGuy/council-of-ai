@@ -5,11 +5,11 @@
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>Council of AIs</title>
 <!-- Auth0 SPA SDK (ESM — loaded in the module script below via import) -->
-<link rel="icon" type="image/x-icon" href="/favicon/favicon.ico"/>
-<link rel="icon" type="image/png" sizes="16x16" href="/favicon/favicon-16x16.png"/>
-<link rel="icon" type="image/png" sizes="32x32" href="/favicon/favicon-32x32.png"/>
-<link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png"/>
-<link rel="manifest" href="/site.webmanifest"/>
+<link rel="icon" type="image/x-icon" href="./favicon/favicon.ico"/>
+<link rel="icon" type="image/png" sizes="16x16" href="./favicon/favicon-16x16.png"/>
+<link rel="icon" type="image/png" sizes="32x32" href="./favicon/favicon-32x32.png"/>
+<link rel="apple-touch-icon" sizes="180x180" href="./favicon/apple-touch-icon.png"/>
+<link rel="manifest" href="./site.webmanifest"/>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Manrope:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
@@ -179,7 +179,7 @@
         }
     </style>
 </head>
-<body class="bg-surface font-body text-on-surface selection:bg-primary-container selection:text-on-primary-container h-screen overflow-hidden flex flex-col">
+<body class="bg-surface font-body text-on-surface selection:bg-primary-container selection:text-on-primary-container h-[100dvh] overflow-hidden flex flex-col">
 
 <!-- ── Login overlay (shown when unauthenticated) ─────────────────────────── -->
 <div id="login-overlay" class="fixed inset-0 bg-surface z-50 flex flex-col items-center justify-center gap-6 hidden">
@@ -250,7 +250,7 @@
 </div>
 </div> -->
 <!-- </header> -->
-<main class="flex-grow max-w-5xl mx-auto w-full px-4 sm:px-6 py-3 sm:py-4 flex flex-col gap-2 sm:gap-4 overflow-hidden md:pb-3">
+<main class="flex-grow max-w-5xl mx-auto w-full px-4 sm:px-6 pt-12 sm:pt-4 pb-3 sm:pb-4 flex flex-col gap-2 sm:gap-4 overflow-hidden md:pb-3">
 <!-- Council Branding Header - Reduced Size -->
 <section id="council-avatars" class="flex justify-center gap-3 sm:gap-8 shrink-0">
 <div class="flex flex-col items-center group avatar-card" data-model="gemini">
@@ -311,10 +311,10 @@
 <!-- Attached documents chips -->
 <div id="doc-chips" class="hidden flex flex-wrap gap-1.5 px-2 pt-1.5 pb-1"></div>
 <!-- Input row -->
-<div class="flex items-center gap-3 bg-surface-container-lowest border border-outline-variant/30 rounded-lg px-4 py-2 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/5 transition-all">
-<span class="material-symbols-outlined text-outline text-lg">search</span>
-<input id="query-input" class="flex-grow bg-transparent border-none focus:ring-0 font-headline text-xs tracking-widest placeholder:text-outline-variant py-0" placeholder="QUERY THE COUNCIL..." type="text"/>
-<div class="flex items-center gap-2">
+<div class="flex items-start gap-3 bg-surface-container-lowest border border-outline-variant/30 rounded-lg px-4 py-2 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/5 transition-all">
+<span class="material-symbols-outlined text-outline text-lg mt-1">search</span>
+<textarea id="query-input" rows="1" class="flex-grow bg-transparent border-none focus:ring-0 font-headline text-xs tracking-widest placeholder:text-outline-variant py-1 resize-none custom-scrollbar leading-relaxed" placeholder="QUERY THE COUNCIL... (Shift+Enter for newline)" style="max-height:40vh;"></textarea>
+<div class="flex items-center gap-2 mt-0.5">
 <!-- Attach button -->
 <button id="attach-btn" title="Attach documents" class="text-outline hover:text-primary transition-colors p-0.5 rounded" type="button">
   <span class="material-symbols-outlined text-lg">attach_file</span>
@@ -359,12 +359,13 @@
     // Replace these four values before uploading to Dreamhost.
     // Do NOT commit real credentials to version control.
     // These are ignored when IS_LOCAL is true.
-    const AUTH0_DOMAIN    = 'REPLACE_WITH_YOUR_AUTH0_DOMAIN';    // e.g. 'your-tenant.us.auth0.com'
-    const AUTH0_CLIENT_ID = 'REPLACE_WITH_YOUR_AUTH0_CLIENT_ID'; // e.g. 'abc123XYZ...'
-    const AUTH0_AUDIENCE  = 'REPLACE_WITH_YOUR_AUTH0_AUDIENCE';  // e.g. 'https://council-api'
+    const AUTH0_DOMAIN    = 'dev-7lo0hfm8e0n0redf.us.auth0.com';    // e.g. 'your-tenant.us.auth0.com'
+    const AUTH0_CLIENT_ID = 'Z9pXFtSBrPCF4QthinP8KIiiX7EaCKaH'; // e.g. 'abc123XYZ...'
+    const AUTH0_AUDIENCE  = 'https://council-api';  // e.g. 'https://council-api'
+
     // Local: '' → relative URLs go to the same-origin Python server.
     // Cloud: full Cloudflare Workers URL.
-    const API_BASE_URL    = IS_LOCAL ? '' : 'REPLACE_WITH_YOUR_WORKERS_URL';
+    const API_BASE_URL    = IS_LOCAL ? '' : 'https://council-of-ai.queuely.workers.dev';
 
     // ── Auth0 client ──────────────────────────────────────────────
     let auth0Client = null;
@@ -737,6 +738,7 @@
         sendBtn.disabled = true;
         attachBtn.disabled = true;
         input.value = '';
+        input.style.height = 'auto';
 
         // For follow-ups, add a visual separator instead of clearing output
         if (conversationHistory) {
@@ -763,8 +765,18 @@
 
     sendBtn.addEventListener('click', submitQuery);
     input.addEventListener('keydown', e => {
-        if (e.key === 'Enter') submitQuery();
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+            e.preventDefault();
+            submitQuery();
+        }
     });
+
+    // Auto-grow textarea up to its max-height
+    function autoResizeInput() {
+        input.style.height = 'auto';
+        input.style.height = Math.min(input.scrollHeight, window.innerHeight * 0.4) + 'px';
+    }
+    input.addEventListener('input', autoResizeInput);
 
     // ── SSE Stream ────────────────────────────────────────────────
     async function streamSession(query, ragDocs = []) {
