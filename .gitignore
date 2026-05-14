@@ -25,3 +25,10 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Node / Workers
+node_modules
+workers/.wrangler/
+
+# Claude Code local state
+.claude/
