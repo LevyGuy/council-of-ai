@@ -140,7 +140,7 @@ async function handleUpload(request: Request, env: Env, origin: string): Promise
   }
 
   const formData = await request.formData();
-  const files = formData.getAll('files') as File[];
+  const files = formData.getAll('files') as unknown as File[];
 
   const documents = await Promise.all(
     files.map(async (file) => {

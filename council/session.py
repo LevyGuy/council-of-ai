@@ -1,5 +1,7 @@
 import logging
+import random
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .display import Display
 from .models import Model, ModelQueue
@@ -40,6 +42,21 @@ def _build_initial_system_prompt(model_name: str, is_followup: bool = False) -> 
     )
 
 
+def _build_independent_system_prompt(model_name: str, is_followup: bool = False) -> str:
+    base = (
+        f"Your name is {model_name}. You are preparing for a multi-model council. "
+        "Write your best independent answer before seeing any other model's response. "
+        "Do not mention the council process or other models. "
+        "Prioritize accuracy, useful nuance, and a clear answer to the user."
+    )
+    if is_followup:
+        return (
+            base
+            + " The user is asking a follow-up question; use the provided prior conversation only as context."
+        )
+    return base
+
+
 def _build_review_system_prompt(current_model: str, models_who_spoke: list[str]) -> str:
     spoke_str = ", ".join(models_who_spoke)
     return (
@@ -56,6 +73,42 @@ def _build_review_system_prompt(current_model: str, models_who_spoke: list[str])
         f"c. Highlight points you agree with.\n"
         f"Address each participant by name directly. "
         f"Keep your response short and concise."
+    )
+
+
+def _build_anonymous_review_system_prompt(current_model: str) -> str:
+    return (
+        f"Your name is {current_model}. You are privately reviewing anonymized answers "
+        "from a multi-model council. Do not guess which model wrote which response. "
+        "Evaluate only the content.\n\n"
+        "For each response, briefly assess accuracy, insight, omissions, and useful points. "
+        "Then provide a final ranking from best to worst.\n\n"
+        "Your final ranking MUST use this exact format:\n"
+        "FINAL RANKING:\n"
+        "1. Response A\n"
+        "2. Response B\n"
+        "Only use the response labels provided in the prompt."
+    )
+
+
+def _build_discussion_system_prompt(model_name: str) -> str:
+    return (
+        ROUND_TABLE_PREAMBLE
+        + f"Your name is {model_name}. The council has already completed private independent "
+        "answers and anonymous peer review. You are now in the visible named council discussion. "
+        "Use the preparation brief to discuss the strongest points, disagreements, and minority views. "
+        "Be candid but concise. Address other participants by name when responding to their points. "
+        "Do not claim that the private review removed all bias; treat it as useful evidence."
+    )
+
+
+def _build_chair_system_prompt(chair_name: str) -> str:
+    return (
+        ROUND_TABLE_PREAMBLE
+        + f"Your name is {chair_name}. You are chairing the council after private independent "
+        "answers, anonymous peer review, and a named discussion. Produce the final answer for the user. "
+        "Include the practical consensus, important caveats, and a short minority report if a plausible "
+        "lower-ranked view should not be ignored. Do not include process markers."
     )
 
 
@@ -97,6 +150,173 @@ def _build_conversation_text(
     return "\n\n".join(parts)
 
 
+def _build_anonymous_review_prompt(user_prompt: str, labeled_answers: list[tuple[str, Turn]]) -> str:
+    responses_text = "\n\n".join(
+        f"{label}:\n{turn.content}" for label, turn in labeled_answers
+    )
+    return (
+        "The user asked:\n"
+        f"{user_prompt}\n\n"
+        "Here are independent answers from different models. They have been anonymized:\n\n"
+        f"{responses_text}\n\n"
+        "Evaluate the responses and rank them from best to worst."
+    )
+
+
+def _parse_ranking(text: str) -> list[str]:
+    import re
+
+    ranking_text = text.split("FINAL RANKING:", 1)[1] if "FINAL RANKING:" in text else text
+    seen: set[str] = set()
+    labels: list[str] = []
+    for match in re.findall(r"Response [A-Z]", ranking_text):
+        if match not in seen:
+            seen.add(match)
+            labels.append(match)
+    return labels
+
+
+def _aggregate_rankings(review_turns: list[Turn], reviewer_label_maps: dict[str, dict[str, str]]) -> list[dict]:
+    positions: dict[str, list[int]] = {}
+    first_place: dict[str, int] = {}
+
+    for turn in review_turns:
+        label_map = reviewer_label_maps.get(turn.model_name, {})
+        for position, label in enumerate(_parse_ranking(turn.content), start=1):
+            model_name = label_map.get(label)
+            if not model_name:
+                continue
+            positions.setdefault(model_name, []).append(position)
+            if position == 1:
+                first_place[model_name] = first_place.get(model_name, 0) + 1
+
+    aggregate = []
+    for model_name, model_positions in positions.items():
+        aggregate.append({
+            "model": model_name,
+            "average_rank": round(sum(model_positions) / len(model_positions), 2),
+            "rankings_count": len(model_positions),
+            "first_place_votes": first_place.get(model_name, 0),
+        })
+    aggregate.sort(key=lambda item: (item["average_rank"], -item["first_place_votes"], item["model"]))
+    return aggregate
+
+
+def _build_preparation_brief(
+    user_prompt: str,
+    independent_turns: list[Turn],
+    review_turns: list[Turn],
+    reviewer_label_maps: dict[str, dict[str, str]],
+    aggregate_rankings: list[dict],
+) -> str:
+    answer_text = "\n\n".join(
+        f"{turn.model_name} independent answer:\n{turn.content}" for turn in independent_turns
+    )
+    review_text = "\n\n".join(
+        f"{turn.model_name} anonymous review label map: {reviewer_label_maps.get(turn.model_name, {})}\n"
+        f"{turn.content}"
+        for turn in review_turns
+    )
+    ranking_text = "\n".join(
+        f"- {item['model']}: avg rank {item['average_rank']} "
+        f"({item['first_place_votes']} first-place vote(s), {item['rankings_count']} ranking(s))"
+        for item in aggregate_rankings
+    ) or "- No parseable rankings."
+
+    return (
+        "=== Council Preparation Brief ===\n"
+        f"User question: {user_prompt}\n\n"
+        "Independent answers were collected privately before models saw each other.\n\n"
+        f"{answer_text}\n\n"
+        "Anonymous peer reviews and rankings:\n"
+        f"{review_text}\n\n"
+        "Aggregate ranking signal:\n"
+        f"{ranking_text}\n"
+        "=== End Preparation Brief ==="
+    )
+
+
+def _send_non_streaming(model: Model, messages: list[Message]) -> tuple[Model, str | None, Exception | None]:
+    try:
+        return model, model.send(messages), None
+    except Exception as e:
+        return model, None, e
+
+
+def _collect_independent_turns(
+    queue: ModelQueue,
+    user_prompt: str,
+    rag_context: str = "",
+    prior_conversation: str = "",
+) -> tuple[list[Turn], list[tuple[str, str]]]:
+    is_followup = bool(prior_conversation)
+    independent_turns: list[Turn] = []
+    errors: list[tuple[str, str]] = []
+
+    def messages_for(model: Model) -> list[Message]:
+        user_content = (
+            _build_conversation_text(user_prompt, [], rag_context, prior_conversation)
+            if is_followup
+            else _build_user_message(user_prompt, rag_context)
+        )
+        return [
+            Message(role="system", content=_build_independent_system_prompt(model.name, is_followup)),
+            Message(role="user", content=user_content),
+        ]
+
+    with ThreadPoolExecutor(max_workers=len(queue.models)) as executor:
+        futures = {
+            executor.submit(_send_non_streaming, model, messages_for(model)): model
+            for model in queue.models
+        }
+        for future in as_completed(futures):
+            model, response, error = future.result()
+            if error or response is None:
+                errors.append((model.name, str(error) if error else "empty response"))
+                continue
+            independent_turns.append(Turn(model_name=model.name, role="Private Independent Answer", content=response))
+
+    order = {name: i for i, name in enumerate(queue.order_names)}
+    independent_turns.sort(key=lambda turn: order.get(turn.model_name, 999))
+    return independent_turns, errors
+
+
+def _collect_anonymous_review_turns(
+    queue: ModelQueue,
+    user_prompt: str,
+    independent_turns: list[Turn],
+) -> tuple[list[Turn], dict[str, dict[str, str]], list[tuple[str, str]]]:
+    review_turns: list[Turn] = []
+    reviewer_label_maps: dict[str, dict[str, str]] = {}
+    errors: list[tuple[str, str]] = []
+
+    def messages_for(model: Model) -> list[Message]:
+        shuffled_turns = list(independent_turns)
+        random.shuffle(shuffled_turns)
+        labeled_turns = [(f"Response {chr(65 + i)}", turn) for i, turn in enumerate(shuffled_turns)]
+        reviewer_label_maps[model.name] = {label: turn.model_name for label, turn in labeled_turns}
+        return [
+            Message(role="system", content=_build_anonymous_review_system_prompt(model.name)),
+            Message(role="user", content=_build_anonymous_review_prompt(user_prompt, labeled_turns)),
+        ]
+
+    with ThreadPoolExecutor(max_workers=len(queue.models)) as executor:
+        futures = {
+            executor.submit(_send_non_streaming, model, messages_for(model)): model
+            for model in queue.models
+        }
+        for future in as_completed(futures):
+            model, response, error = future.result()
+            if error or response is None:
+                errors.append((model.name, str(error) if error else "empty response"))
+                continue
+            review_turns.append(Turn(model_name=model.name, role="Anonymous Peer Review", content=response))
+
+    order = {name: i for i, name in enumerate(queue.order_names)}
+    review_turns.sort(key=lambda turn: order.get(turn.model_name, 999))
+    return review_turns, reviewer_label_maps, errors
+
+
 def _try_send_stream(model: Model, messages: list[Message], display: Display, role: str) -> str | None:
     try:
         stream = model.send_stream(messages)
@@ -108,68 +328,57 @@ def _try_send_stream(model: Model, messages: list[Message], display: Display, ro
 
 def run_session(queue: ModelQueue, user_prompt: str, max_iterations: int, display: Display) -> Transcript:
     transcript = Transcript(user_prompt=user_prompt, panel_order=queue.order_names)
-    all_turns: list[Turn] = []
+    iteration = Iteration(number=1)
+    display.show_iteration_info(1, 1)
 
-    for iteration_num in range(1, max_iterations + 1):
-        iteration = Iteration(number=iteration_num)
-        display.show_iteration_info(iteration_num, max_iterations)
+    display.show_model_response("System", "Preparing Council", "Collecting independent answers...")
+    independent_turns, independent_errors = _collect_independent_turns(queue, user_prompt)
+    for model_name, error in independent_errors:
+        display.show_model_skipped(model_name, error)
 
-        if iteration_num == 1:
-            # First model gives initial response
-            first = queue.first
-            messages = [
-                Message(role="system", content=_build_initial_system_prompt(first.name)),
-                Message(role="user", content=user_prompt),
-            ]
-            response = _try_send_stream(first, messages, display, "Initial Response")
-            if response is None:
-                break
+    if not independent_turns:
+        transcript.iterations.append(iteration)
+        return transcript
 
-            turn = Turn(model_name=first.name, role="Initial Response", content=response)
-            all_turns.append(turn)
-            iteration.turns.append(turn)
+    display.show_model_response("System", "Preparing Council", "Running anonymous peer review...")
+    review_turns, reviewer_label_maps, review_errors = _collect_anonymous_review_turns(
+        queue, user_prompt, independent_turns,
+    )
+    for model_name, error in review_errors:
+        display.show_model_skipped(model_name, error)
 
-        # Reviewers review ALL previous responses
-        for reviewer in queue.reviewers:
-            conversation_text = _build_conversation_text(user_prompt, all_turns)
-            models_who_spoke = list(dict.fromkeys(t.model_name for t in all_turns))
-            messages = [
-                Message(role="system", content=_build_review_system_prompt(reviewer.name, models_who_spoke)),
-                Message(role="user", content=conversation_text),
-            ]
-            response = _try_send_stream(reviewer, messages, display, "Review")
-            if response is None:
-                continue
+    aggregate_rankings = _aggregate_rankings(review_turns, reviewer_label_maps)
+    preparation_brief = _build_preparation_brief(
+        user_prompt, independent_turns, review_turns, reviewer_label_maps, aggregate_rankings,
+    )
+    iteration.turns.extend(independent_turns)
+    iteration.turns.extend(review_turns)
 
-            turn = Turn(model_name=reviewer.name, role="Review", content=response)
-            all_turns.append(turn)
-            iteration.turns.append(turn)
-
-        # First model follow-up / summary check
-        first = queue.first
-        conversation_text = _build_conversation_text(user_prompt, all_turns)
+    visible_turns: list[Turn] = []
+    for model in queue.models:
+        conversation_text = _build_conversation_text(user_prompt, visible_turns, prior_conversation=preparation_brief)
         messages = [
-            Message(role="system", content=_build_followup_system_prompt(first.name)),
+            Message(role="system", content=_build_discussion_system_prompt(model.name)),
             Message(role="user", content=conversation_text),
         ]
-        response = _try_send_stream(first, messages, display, "Follow-up")
+        response = _try_send_stream(model, messages, display, "Council Discussion")
         if response is None:
-            break
-
-        turn = Turn(model_name=first.name, role="Follow-up", content=response)
-        all_turns.append(turn)
+            continue
+        turn = Turn(model_name=model.name, role="Council Discussion", content=response)
+        visible_turns.append(turn)
         iteration.turns.append(turn)
 
-        transcript.iterations.append(iteration)
+    chair = queue.first
+    conversation_text = _build_conversation_text(user_prompt, visible_turns, prior_conversation=preparation_brief)
+    messages = [
+        Message(role="system", content=_build_chair_system_prompt(chair.name)),
+        Message(role="user", content=conversation_text),
+    ]
+    response = _try_send_stream(chair, messages, display, "Final Synthesis")
+    if response is not None:
+        iteration.turns.append(Turn(model_name=chair.name, role="Final Synthesis", content=response))
 
-        # Check if first model signals completion
-        if COMPLETE_SIGNAL in response:
-            break
-
-    # Edge case: save partial turns if no iterations were fully appended
-    if not transcript.iterations and all_turns:
-        iteration = Iteration(number=1, turns=[t for t in all_turns])
-        transcript.iterations.append(iteration)
+    transcript.iterations.append(iteration)
 
     return transcript
 
@@ -207,87 +416,111 @@ def run_session_events(
         logger.info("RAG context attached: %d chars", len(rag_context))
 
     transcript = Transcript(user_prompt=user_prompt, panel_order=queue.order_names)
-    all_turns: list[Turn] = []
+    visible_turns: list[Turn] = []
+    iteration = Iteration(number=1)
 
-    # Tell the client about the panel
     yield {
         "type": "session_start",
         "models": [{"name": m.name, "key": _model_key(m.name)} for m in queue.models],
     }
 
-    for iteration_num in range(1, max_iterations + 1):
-        iteration = Iteration(number=iteration_num)
-        logger.info("Starting iteration %d/%d", iteration_num, max_iterations)
+    yield {
+        "type": "preparation_start",
+        "title": "Preparing council",
+        "steps": [
+            "Collecting independent answers",
+            "Running anonymous peer review",
+            "Mapping disagreements",
+        ],
+    }
 
-        yield {"type": "iteration", "number": iteration_num, "max": max_iterations}
+    independent_turns, independent_errors = _collect_independent_turns(
+        queue, user_prompt, rag_context, prior_conversation,
+    )
+    for turn in independent_turns:
+        yield {
+            "type": "preparation_item",
+            "stage": "independent",
+            "model_key": _model_key(turn.model_name),
+            "name": turn.model_name,
+            "label": f"{turn.model_name} wrote an independent answer",
+            "content": turn.content,
+        }
+    for model_name, error in independent_errors:
+        yield {"type": "error", "model": model_name, "message": error}
 
-        if iteration_num == 1:
-            # First model gives initial response — include RAG context in user message
-            first = queue.first
-            initial_content = (
-                _build_conversation_text(user_prompt, [], rag_context, prior_conversation)
-                if is_followup
-                else _build_user_message(user_prompt, rag_context)
-            )
-            messages = [
-                Message(role="system", content=_build_initial_system_prompt(first.name, is_followup)),
-                Message(role="user", content=initial_content),
-            ]
+    if not independent_turns:
+        transcript.iterations.append(iteration)
+        yield {"type": "done", "transcript": transcript, "conversation_text": prior_conversation}
+        return
 
-            response = yield from _stream_model_events(first, messages, "Initial Response")
-            if response is None:
-                break
+    review_turns, reviewer_label_maps, review_errors = _collect_anonymous_review_turns(
+        queue, user_prompt, independent_turns,
+    )
+    for turn in review_turns:
+        yield {
+            "type": "preparation_item",
+            "stage": "review",
+            "model_key": _model_key(turn.model_name),
+            "name": turn.model_name,
+            "label": f"{turn.model_name} completed anonymous peer review",
+            "content": turn.content,
+            "label_map": reviewer_label_maps.get(turn.model_name, {}),
+            "ranking": _parse_ranking(turn.content),
+        }
+    for model_name, error in review_errors:
+        yield {"type": "error", "model": model_name, "message": error}
 
-            turn = Turn(model_name=first.name, role="Initial Response", content=response)
-            all_turns.append(turn)
-            iteration.turns.append(turn)
+    aggregate_rankings = _aggregate_rankings(review_turns, reviewer_label_maps)
+    preparation_brief = _build_preparation_brief(
+        user_prompt, independent_turns, review_turns, reviewer_label_maps, aggregate_rankings,
+    )
+    iteration.turns.extend(independent_turns)
+    iteration.turns.extend(review_turns)
 
-        # Reviewers — RAG context is threaded into the full conversation text
-        for reviewer in queue.reviewers:
-            conversation_text = _build_conversation_text(user_prompt, all_turns, rag_context, prior_conversation)
-            models_who_spoke = list(dict.fromkeys(t.model_name for t in all_turns))
-            messages = [
-                Message(role="system", content=_build_review_system_prompt(reviewer.name, models_who_spoke)),
-                Message(role="user", content=conversation_text),
-            ]
+    yield {
+        "type": "preparation_complete",
+        "aggregate_rankings": aggregate_rankings,
+        "brief": preparation_brief,
+    }
 
-            response = yield from _stream_model_events(reviewer, messages, "Review")
-            if response is None:
-                continue
+    yield {"type": "iteration", "number": 1, "max": 1, "label": "Named council discussion"}
 
-            turn = Turn(model_name=reviewer.name, role="Review", content=response)
-            all_turns.append(turn)
-            iteration.turns.append(turn)
-
-        # First model follow-up / summary
-        first = queue.first
-        conversation_text = _build_conversation_text(user_prompt, all_turns, rag_context, prior_conversation)
+    for model in queue.models:
+        conversation_text = _build_conversation_text(
+            user_prompt, visible_turns, prior_conversation=preparation_brief,
+        )
         messages = [
-            Message(role="system", content=_build_followup_system_prompt(first.name)),
+            Message(role="system", content=_build_discussion_system_prompt(model.name)),
             Message(role="user", content=conversation_text),
         ]
-
-        response = yield from _stream_model_events(first, messages, "Follow-up")
+        response = yield from _stream_model_events(model, messages, "Council Discussion")
         if response is None:
-            break
-
-        # Strip the completion signal from displayed content
+            continue
         clean_response = response.replace(COMPLETE_SIGNAL, "").strip()
-        turn = Turn(model_name=first.name, role="Follow-up", content=clean_response)
-        all_turns.append(turn)
+        turn = Turn(model_name=model.name, role="Council Discussion", content=clean_response)
+        visible_turns.append(turn)
         iteration.turns.append(turn)
-        transcript.iterations.append(iteration)
 
-        if COMPLETE_SIGNAL in response:
-            break
+    chair = queue.first
+    conversation_text = _build_conversation_text(
+        user_prompt, visible_turns, prior_conversation=preparation_brief,
+    )
+    messages = [
+        Message(role="system", content=_build_chair_system_prompt(chair.name)),
+        Message(role="user", content=conversation_text),
+    ]
+    response = yield from _stream_model_events(chair, messages, "Final Synthesis")
+    if response is not None:
+        clean_response = response.replace(COMPLETE_SIGNAL, "").strip()
+        turn = Turn(model_name=chair.name, role="Final Synthesis", content=clean_response)
+        visible_turns.append(turn)
+        iteration.turns.append(turn)
 
-    # Edge case
-    if not transcript.iterations and all_turns:
-        iteration = Iteration(number=1, turns=list(all_turns))
-        transcript.iterations.append(iteration)
-
-    # Build the full conversation text so the client can use it for follow-ups
-    full_conversation = _build_conversation_text(user_prompt, all_turns, rag_context, prior_conversation)
+    transcript.iterations.append(iteration)
+    full_conversation = _build_conversation_text(
+        user_prompt, visible_turns, prior_conversation=preparation_brief,
+    )
     yield {"type": "done", "transcript": transcript, "conversation_text": full_conversation}
 
 
