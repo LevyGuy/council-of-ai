@@ -636,6 +636,9 @@
     let currentTurnEl = null;
     let sessionActive = false;
     let conversationHistory = '';  // accumulated conversation context for follow-ups
+    let preparationPanel = null;
+    let preparationList = null;
+    let preparationDetails = null;
 
     // ── Document attachment state ─────────────────────────────────
     // Each entry: { filename, content, truncated }
@@ -846,6 +849,71 @@
     }
 
     // ── Event handler ─────────────────────────────────────────────
+    function ensurePreparationPanel() {
+        if (preparationPanel) return;
+
+        preparationPanel = document.createElement('details');
+        preparationPanel.className = 'mb-4 rounded-lg border border-outline-variant/20 bg-surface-container-lowest overflow-hidden';
+        preparationPanel.innerHTML = `
+            <summary class="cursor-pointer select-none px-3 py-2 flex items-center gap-2 text-[10px] font-headline uppercase tracking-widest text-outline hover:text-on-surface">
+                <span class="material-symbols-outlined text-sm">pending_actions</span>
+                <span>Preparing council</span>
+            </summary>
+            <div class="px-3 pb-3">
+                <div class="preparation-list flex flex-col gap-1.5"></div>
+                <div class="preparation-details hidden mt-3 border-t border-outline-variant/20 pt-3"></div>
+            </div>`;
+        preparationList = preparationPanel.querySelector('.preparation-list');
+        preparationDetails = preparationPanel.querySelector('.preparation-details');
+        output.appendChild(preparationPanel);
+        output.scrollTop = output.scrollHeight;
+    }
+
+    function appendPreparationItem(event) {
+        ensurePreparationPanel();
+
+        const item = document.createElement('div');
+        item.className = 'flex items-center gap-2 text-xs text-on-surface-variant';
+        item.innerHTML = `
+            <span class="material-symbols-outlined text-sm text-primary">check_circle</span>
+            <span>${escapeHtml(event.label || 'Preparation step complete')}</span>`;
+        preparationList.appendChild(item);
+
+        const detail = document.createElement('div');
+        detail.className = 'mb-3';
+        const labelMap = event.label_map
+            ? `<div class="text-[10px] text-outline mt-1">Anonymous labels: ${escapeHtml(JSON.stringify(event.label_map))}</div>`
+            : '';
+        const ranking = event.ranking?.length
+            ? `<div class="text-[10px] text-outline mt-1">Ranking: ${escapeHtml(event.ranking.join(' > '))}</div>`
+            : '';
+        detail.innerHTML = `
+            <div class="font-headline text-[10px] uppercase tracking-widest text-on-surface mb-1">${escapeHtml(event.label || event.name || 'Preparation')}</div>
+            ${labelMap}
+            ${ranking}
+            <pre class="mt-2 whitespace-pre-wrap text-[11px] leading-relaxed bg-surface-container-low rounded-md p-2 overflow-x-auto">${escapeHtml(event.content || '')}</pre>`;
+        preparationDetails.classList.remove('hidden');
+        preparationDetails.appendChild(detail);
+        output.scrollTop = output.scrollHeight;
+    }
+
+    function completePreparation(event) {
+        ensurePreparationPanel();
+        const summary = preparationPanel.querySelector('summary span:last-child');
+        if (summary) summary.textContent = 'Council preparation complete';
+
+        if (event.aggregate_rankings?.length) {
+            const rankings = document.createElement('div');
+            rankings.className = 'mt-2 text-[11px] text-on-surface-variant';
+            rankings.innerHTML = '<div class="font-headline text-[10px] uppercase tracking-widest text-outline mb-1">Aggregate ranking signal</div>' +
+                event.aggregate_rankings.map(r =>
+                    `<div>${escapeHtml(r.model)} · avg rank ${escapeHtml(r.average_rank)} · ${escapeHtml(r.first_place_votes)} first-place vote(s)</div>`
+                ).join('');
+            preparationList.appendChild(rankings);
+        }
+        output.scrollTop = output.scrollHeight;
+    }
+
     function handleEvent(event) {
         switch (event.type) {
             case 'session_start': {
@@ -856,12 +924,31 @@
                 break;
             }
 
+            case 'preparation_start': {
+                preparationPanel = null;
+                preparationList = null;
+                preparationDetails = null;
+                ensurePreparationPanel();
+                break;
+            }
+
+            case 'preparation_item': {
+                appendPreparationItem(event);
+                break;
+            }
+
+            case 'preparation_complete': {
+                completePreparation(event);
+                break;
+            }
+
             case 'iteration': {
                 const sep = document.createElement('div');
                 sep.className = 'flex items-center gap-3 my-4';
+                const label = event.label || `Iteration ${event.number} / ${event.max}`;
                 sep.innerHTML =
                     '<div class="h-px flex-grow bg-gray-200"></div>' +
-                    `<span class="text-[9px] font-headline tracking-[0.3em] uppercase text-gray-400 font-bold">Iteration ${event.number} / ${event.max}</span>` +
+                    `<span class="text-[9px] font-headline tracking-[0.3em] uppercase text-gray-400 font-bold">${escapeHtml(label)}</span>` +
                     '<div class="h-px flex-grow bg-gray-200"></div>';
                 output.appendChild(sep);
                 output.scrollTop = output.scrollHeight;

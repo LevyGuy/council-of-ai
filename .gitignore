@@ -32,3 +32,6 @@ workers/.wrangler/
 
 # Claude Code local state
 .claude/
+
+plan/
+

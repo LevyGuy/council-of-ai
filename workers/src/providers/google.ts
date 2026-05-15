@@ -28,7 +28,7 @@ export async function* streamGoogle(
     config: {
       ...(systemMsg ? { systemInstruction: systemMsg.content } : {}),
       maxOutputTokens: 2048,
-      thinkingConfig: { thinkingBudget: 1024 },
+      thinkingConfig: { thinkingBudget: 1024 } as unknown as Record<string, never>,
     },
   });
 
