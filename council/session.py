@@ -434,6 +434,14 @@ def run_session_events(
         ],
     }
 
+    for model in queue.models:
+        yield {
+            "type": "preparation_model_start",
+            "stage": "independent",
+            "model_key": _model_key(model.name),
+            "name": model.name,
+            "label": f"{model.name} writing an independent answer",
+        }
     independent_turns, independent_errors = _collect_independent_turns(
         queue, user_prompt, rag_context, prior_conversation,
     )
@@ -454,6 +462,14 @@ def run_session_events(
         yield {"type": "done", "transcript": transcript, "conversation_text": prior_conversation}
         return
 
+    for model in queue.models:
+        yield {
+            "type": "preparation_model_start",
+            "stage": "review",
+            "model_key": _model_key(model.name),
+            "name": model.name,
+            "label": f"{model.name} running anonymous peer review",
+        }
     review_turns, reviewer_label_maps, review_errors = _collect_anonymous_review_turns(
         queue, user_prompt, independent_turns,
     )
