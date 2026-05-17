@@ -639,6 +639,8 @@
     let preparationPanel = null;
     let preparationList = null;
     let preparationDetails = null;
+    let currentSpeaker = null;
+    let currentTurnHidden = false;
 
     // ── Document attachment state ─────────────────────────────────
     // Each entry: { filename, content, truncated }
@@ -869,8 +871,16 @@
         output.scrollTop = output.scrollHeight;
     }
 
+    function updatePreparationSummary(text) {
+        ensurePreparationPanel();
+        const summary = preparationPanel.querySelector('summary span:last-child');
+        if (summary) summary.textContent = text ? `Council preparation - ${text}` : 'Council preparation';
+    }
+
     function appendPreparationItem(event) {
         ensurePreparationPanel();
+        updatePreparationSummary(event.label || 'Preparation step complete');
+        if (event.model_key) setSpeaking(event.model_key);
 
         const item = document.createElement('div');
         item.className = 'flex items-center gap-2 text-xs text-on-surface-variant';
@@ -897,10 +907,19 @@
         output.scrollTop = output.scrollHeight;
     }
 
+    function appendHiddenTurnToPreparation(speaker, content) {
+        if (!speaker || !content?.trim()) return;
+        appendPreparationItem({
+            label: `${speaker.name} ${speaker.role.toLowerCase()}`,
+            name: speaker.name,
+            model_key: speaker.model_key,
+            content,
+        });
+    }
+
     function completePreparation(event) {
         ensurePreparationPanel();
-        const summary = preparationPanel.querySelector('summary span:last-child');
-        if (summary) summary.textContent = 'Council preparation complete';
+        updatePreparationSummary('anonymous review complete');
 
         if (event.aggregate_rankings?.length) {
             const rankings = document.createElement('div');
@@ -929,6 +948,14 @@
                 preparationList = null;
                 preparationDetails = null;
                 ensurePreparationPanel();
+                updatePreparationSummary('collecting independent answers');
+                break;
+            }
+
+            case 'preparation_model_start': {
+                ensurePreparationPanel();
+                updatePreparationSummary(event.label || `${event.name} working`);
+                if (event.model_key) setSpeaking(event.model_key);
                 break;
             }
 
@@ -943,45 +970,52 @@
             }
 
             case 'iteration': {
-                const sep = document.createElement('div');
-                sep.className = 'flex items-center gap-3 my-4';
                 const label = event.label || `Iteration ${event.number} / ${event.max}`;
-                sep.innerHTML =
-                    '<div class="h-px flex-grow bg-gray-200"></div>' +
-                    `<span class="text-[9px] font-headline tracking-[0.3em] uppercase text-gray-400 font-bold">${escapeHtml(label)}</span>` +
-                    '<div class="h-px flex-grow bg-gray-200"></div>';
-                output.appendChild(sep);
-                output.scrollTop = output.scrollHeight;
+                updatePreparationSummary(label.toLowerCase());
                 break;
             }
 
             case 'speaker': {
                 setSpeaking(event.model_key);
-                const color = modelColorMap[event.model_key] || '#64748b';
+                currentSpeaker = event;
+                currentTurnHidden = event.role !== 'Final Synthesis';
+                streamBuffer = '';
+                renderDirty = false;
 
-                // Header
+                if (currentTurnHidden) {
+                    updatePreparationSummary(`${event.name} ${event.role.toLowerCase()}`);
+                    currentTurnEl = null;
+                    stopPretextRenderLoop();
+                    break;
+                }
+
+                const sep = document.createElement('div');
+                sep.className = 'flex items-center gap-3 my-4';
+                sep.innerHTML =
+                    '<div class="h-px flex-grow bg-gray-200"></div>' +
+                    '<span class="text-[9px] font-headline tracking-[0.3em] uppercase text-gray-400 font-bold">Final synthesis</span>' +
+                    '<div class="h-px flex-grow bg-gray-200"></div>';
+                output.appendChild(sep);
+
+                const color = modelColorMap[event.model_key] || '#64748b';
                 const header = document.createElement('div');
                 header.className = 'font-headline text-xs font-bold tracking-wider uppercase mt-5 mb-1';
                 header.style.color = color;
                 header.textContent = `${event.name} \u2014 ${event.role}`;
                 output.appendChild(header);
 
-                // Streaming text container
                 currentTurnEl = document.createElement('div');
                 currentTurnEl.className = 'turn-content mb-4';
                 output.appendChild(currentTurnEl);
                 output.scrollTop = output.scrollHeight;
 
-                // Reset pretext streaming state for this turn
-                streamBuffer = '';
-                renderDirty = false;
                 startPretextRenderLoop();
                 break;
             }
 
             case 'chunk': {
-                if (currentTurnEl) {
-                    streamBuffer += event.text;
+                streamBuffer += event.text;
+                if (currentTurnEl && !currentTurnHidden) {
                     renderDirty = true;
                     // No direct DOM mutation here — batched via rAF
                 }
@@ -991,13 +1025,17 @@
             case 'turn_end': {
                 // Stop the render loop and swap in final HTML
                 stopPretextRenderLoop();
-                if (currentTurnEl && event.html) {
+                if (currentTurnHidden) {
+                    appendHiddenTurnToPreparation(currentSpeaker, event.content || streamBuffer);
+                } else if (currentTurnEl && event.html) {
                     currentTurnEl.className = 'turn-content mb-4 prose prose-sm max-w-none';
                     currentTurnEl.innerHTML = event.html;
                     output.scrollTop = output.scrollHeight;
                 }
                 streamBuffer = '';
                 renderDirty = false;
+                currentSpeaker = null;
+                currentTurnHidden = false;
                 break;
             }
 

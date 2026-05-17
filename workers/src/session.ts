@@ -317,6 +317,16 @@ export async function* runSessionEvents(
     ],
   });
 
+  for (const model of shuffled) {
+    yield sse({
+      type: 'preparation_model_start',
+      stage: 'independent',
+      model_key: model.name.toLowerCase(),
+      name: model.name,
+      label: `${model.name} writing an independent answer`,
+    });
+  }
+
   const independentResults = await Promise.all(shuffled.map(async (model) => {
     const userContent = isFollowup
       ? buildConversationText(req.query, [], ragContext, req.prior_conversation)
@@ -357,6 +367,16 @@ export async function* runSessionEvents(
       conversation_text: req.prior_conversation ?? '',
     });
     return;
+  }
+
+  for (const model of shuffled) {
+    yield sse({
+      type: 'preparation_model_start',
+      stage: 'review',
+      model_key: model.name.toLowerCase(),
+      name: model.name,
+      label: `${model.name} running anonymous peer review`,
+    });
   }
 
   const reviewerLabelMaps: Record<string, Record<string, string>> = {};
