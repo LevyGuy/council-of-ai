@@ -593,15 +593,27 @@
 
     // Mirror session_start: color models in the order they first appear so a
     // rehydrated thread uses the same panel palette as a live session.
-    function seedColorMapFromTurns(turns) {
+    function seedColorMapFromEntries(entries) {
         const seen = [];
-        turns.forEach(t => {
-            const key = (t.model_key || (t.name || '').toLowerCase());
+        entries.forEach(e => {
+            if (e && e.kind === 'user') return;
+            const key = (e.model_key || (e.name || '').toLowerCase());
             if (key && !seen.includes(key)) seen.push(key);
         });
         seen.forEach((key, i) => {
             modelColorMap[key] = MODEL_COLORS[i] || '#94a3b8';
         });
+    }
+
+    // Render a single saved entry. Entries without `kind` come from sessions
+    // saved before user-question entries existed and are treated as turns.
+    function renderSavedEntry(entry, idx, all) {
+        if (entry && entry.kind === 'user') {
+            const isFirst = !all.slice(0, idx).some(e => e && e.kind === 'user');
+            appendUserQuestion(entry.query || '', { followup: !isFirst });
+        } else {
+            renderSavedTurn(entry);
+        }
     }
 
     async function resumeSession(sessionId, title) {
@@ -628,28 +640,42 @@
                 '<div class="h-px flex-grow bg-secondary-container"></div>';
             output.appendChild(banner);
 
-            if (session.query) {
-                appendUserQuestion(session.query, { followup: false });
-            }
-
-            // Sessions saved before display_turns existed fall back to the raw
-            // conversation_text so they're still readable.
-            let displayTurns = [];
+            // Parse the cumulative display chain. Older sessions stored only
+            // turn entries (no `kind`) — promote them and prepend the original
+            // query so the chain is complete when this session is later resumed.
+            let displayEntries = [];
             try {
-                displayTurns = JSON.parse(session.display_turns || '[]');
+                displayEntries = JSON.parse(session.display_turns || '[]');
             } catch (parseErr) {
                 console.warn('[council] Could not parse display_turns:', parseErr);
             }
 
-            if (displayTurns.length) {
-                seedColorMapFromTurns(displayTurns);
-                displayTurns.forEach(renderSavedTurn);
-            } else if (session.conversation_text) {
-                const fallback = document.createElement('pre');
-                fallback.className = 'whitespace-pre-wrap text-xs leading-relaxed bg-surface-container-low rounded-md p-3 my-3 overflow-x-auto';
-                fallback.textContent = session.conversation_text;
-                output.appendChild(fallback);
+            const hasUserEntry = displayEntries.some(e => e && e.kind === 'user');
+            if (displayEntries.length && !hasUserEntry) {
+                displayEntries = [
+                    ...(session.query ? [{ kind: 'user', query: session.query }] : []),
+                    ...displayEntries.map(t => ({ kind: 'turn', ...t })),
+                ];
             }
+
+            if (displayEntries.length) {
+                seedColorMapFromEntries(displayEntries);
+                displayEntries.forEach(renderSavedEntry);
+            } else {
+                // No structured turns at all (oldest sessions) — show the
+                // original question and the raw conversation_text so the
+                // thread is still readable.
+                if (session.query) appendUserQuestion(session.query, { followup: false });
+                if (session.conversation_text) {
+                    const fallback = document.createElement('pre');
+                    fallback.className = 'whitespace-pre-wrap text-xs leading-relaxed bg-surface-container-low rounded-md p-3 my-3 overflow-x-auto';
+                    fallback.textContent = session.conversation_text;
+                    output.appendChild(fallback);
+                }
+            }
+
+            // Seed the cumulative chain so the next follow-up extends this thread.
+            priorDisplayEntries = displayEntries;
 
             const hint = document.createElement('p');
             hint.className = 'text-xs text-outline text-center italic mt-4 mb-2';
@@ -693,6 +719,7 @@
     let currentTurnEl = null;
     let sessionActive = false;
     let conversationHistory = '';  // accumulated conversation context for follow-ups
+    let priorDisplayEntries = [];  // cumulative chain of {kind:'user'|'turn', ...} entries
     let preparationPanel = null;
     let preparationList = null;
     let preparationDetails = null;
@@ -862,7 +889,11 @@
             const resp = await fetch(`${API_BASE_URL}/api/session`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-                body: JSON.stringify({...body, prior_conversation: conversationHistory}),
+                body: JSON.stringify({
+                    ...body,
+                    prior_conversation: conversationHistory,
+                    prior_display_turns: priorDisplayEntries,
+                }),
             });
             console.log('[council] Response status:', resp.status);
 
@@ -1086,6 +1117,9 @@
                 // Save conversation context for follow-ups
                 if (event.conversation_text) {
                     conversationHistory = event.conversation_text;
+                }
+                if (Array.isArray(event.display_turns)) {
+                    priorDisplayEntries = event.display_turns;
                 }
 
                 const footer = document.createElement('div');

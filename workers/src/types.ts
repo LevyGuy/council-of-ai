@@ -43,6 +43,11 @@ export interface SessionRequest {
   query: string;
   rag_documents?: Array<{ filename: string; content: string }>;
   prior_conversation?: string;
+  // Cumulative display history from previous sessions in this thread. The
+  // worker treats it opaquely and prepends it to the new turns when saving,
+  // so a saved follow-up session contains the full Q&A chain back to the
+  // first question.
+  prior_display_turns?: DisplayEntry[];
 }
 
 // ── Persisted user record (D1) ───────────────────────────────────────────────
@@ -55,16 +60,25 @@ export interface User {
   last_login: number;
 }
 
-// ── Display-friendly turn for client rehydration ─────────────────────────────
+// ── Display-friendly entries for client rehydration ──────────────────────────
 // Stored as JSON in sessions.display_turns so the frontend can replay the full
-// conversation when a user opens a session from history.
+// conversation (user questions + each council turn) when a user opens a session
+// from history.
 export interface DisplayTurn {
+  kind: 'turn';
   model_key: string;  // lowercased model name, matches modelColorMap key
   name: string;       // e.g. "Claude"
   role: string;       // e.g. "Council Discussion", "Final Synthesis"
   content: string;    // raw markdown
   html: string;       // rendered HTML (server-side via marked)
 }
+
+export interface DisplayUserEntry {
+  kind: 'user';
+  query: string;
+}
+
+export type DisplayEntry = DisplayTurn | DisplayUserEntry;
 
 // ── Persisted session record (D1) ────────────────────────────────────────────
 export interface SessionRecord {

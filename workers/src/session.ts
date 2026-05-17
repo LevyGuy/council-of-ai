@@ -2,7 +2,7 @@ import { marked } from 'marked';
 import { streamAnthropic } from './providers/anthropic.ts';
 import { streamOpenAI } from './providers/openai.ts';
 import { streamGoogle } from './providers/google.ts';
-import type { DisplayTurn, Message, ModelConfig, SessionRequest, Turn } from './types.ts';
+import type { DisplayEntry, DisplayTurn, Message, ModelConfig, SessionRequest, Turn } from './types.ts';
 
 // ── Constants (mirrors Python session.py) ────────────────────────────────────
 const COMPLETE_SIGNAL = '[COUNCIL_DONE]';
@@ -296,6 +296,7 @@ export async function* runSessionEvents(
 ): AsyncGenerator<string> {
   const isFollowup = Boolean(req.prior_conversation);
   const ragContext = buildRagContext(req.rag_documents ?? []);
+  const priorDisplayEntries: DisplayEntry[] = req.prior_display_turns ?? [];
 
   // Shuffle the panel order. The first model becomes the rotating chair only
   // after all models have produced independent answers.
@@ -355,7 +356,7 @@ export async function* runSessionEvents(
       iterations: 0,
       transcript: null,
       conversation_text: req.prior_conversation ?? '',
-      display_turns: [],
+      display_turns: priorDisplayEntries,
     });
     return;
   }
@@ -440,7 +441,7 @@ export async function* runSessionEvents(
     const html = await markdownToHtml(cleanText);
     yield sse({ type: 'turn_end', content: cleanText, html });
     visibleTurns.push({ modelName: model.name, role, content: cleanText });
-    displayTurns.push({ model_key: modelKey, name: model.name, role, content: cleanText, html });
+    displayTurns.push({ kind: 'turn', model_key: modelKey, name: model.name, role, content: cleanText, html });
   }
 
   const chairConversationText = buildConversationText(
@@ -470,16 +471,23 @@ export async function* runSessionEvents(
     const html = await markdownToHtml(cleanText);
     yield sse({ type: 'turn_end', content: cleanText, html });
     visibleTurns.push({ modelName: first.name, role: chairRole, content: cleanText });
-    displayTurns.push({ model_key: chairKey, name: first.name, role: chairRole, content: cleanText, html });
+    displayTurns.push({ kind: 'turn', model_key: chairKey, name: first.name, role: chairRole, content: cleanText, html });
   }
 
   const conversationText = buildConversationText(req.query, visibleTurns, '', preparationBrief);
+
+  // Cumulative display chain: prior thread + this round's question + this round's turns.
+  const cumulativeDisplayTurns: DisplayEntry[] = [
+    ...priorDisplayEntries,
+    { kind: 'user', query: req.query },
+    ...displayTurns,
+  ];
 
   yield sse({
     type: 'done',
     iterations: Math.min(maxIterations, 1),
     transcript: null, // Workers don't persist files; history lives client-side
     conversation_text: conversationText,
-    display_turns: displayTurns,
+    display_turns: cumulativeDisplayTurns,
   });
 }
