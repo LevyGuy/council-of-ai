@@ -98,6 +98,7 @@ async function handleSession(request: Request, env: Env, origin: string): Promis
                 id: sessionId,
                 query: req.query,
                 conversation_text: event.conversation_text as string,
+                display_turns: JSON.stringify(event.display_turns ?? []),
                 model_names: JSON.stringify(capturedModelNames),
                 iterations: (event.iterations as number) ?? 1,
               });

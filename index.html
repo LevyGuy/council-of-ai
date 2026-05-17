@@ -570,6 +570,40 @@
         }
     }
 
+    function renderSavedTurn(turn) {
+        const key = (turn.model_key || (turn.name || '').toLowerCase());
+        const color = modelColorMap[key] || '#64748b';
+
+        const header = document.createElement('div');
+        header.className = 'font-headline text-xs font-bold tracking-wider uppercase mt-5 mb-1';
+        header.style.color = color;
+        header.textContent = `${turn.name} — ${turn.role}`;
+        output.appendChild(header);
+
+        const body = document.createElement('div');
+        body.className = 'turn-content mb-4 prose prose-sm max-w-none';
+        if (turn.html) {
+            body.innerHTML = turn.html;
+        } else {
+            body.textContent = turn.content || '';
+            body.classList.add('whitespace-pre-wrap');
+        }
+        output.appendChild(body);
+    }
+
+    // Mirror session_start: color models in the order they first appear so a
+    // rehydrated thread uses the same panel palette as a live session.
+    function seedColorMapFromTurns(turns) {
+        const seen = [];
+        turns.forEach(t => {
+            const key = (t.model_key || (t.name || '').toLowerCase());
+            if (key && !seen.includes(key)) seen.push(key);
+        });
+        seen.forEach((key, i) => {
+            modelColorMap[key] = MODEL_COLORS[i] || '#94a3b8';
+        });
+    }
+
     async function resumeSession(sessionId, title) {
         closeHistoryPanel();
         if (sessionActive) return;
@@ -582,9 +616,8 @@
             const session = await resp.json();
 
             // Restore prior-conversation context so the next query is a follow-up
-            conversationHistory = session.conversation_text;
+            conversationHistory = session.conversation_text || '';
 
-            // Show a resume banner in the output area
             output.innerHTML = '';
             const banner = document.createElement('div');
             banner.className = 'flex items-center gap-3 mb-3';
@@ -595,11 +628,35 @@
                 '<div class="h-px flex-grow bg-secondary-container"></div>';
             output.appendChild(banner);
 
+            if (session.query) {
+                appendUserQuestion(session.query, { followup: false });
+            }
+
+            // Sessions saved before display_turns existed fall back to the raw
+            // conversation_text so they're still readable.
+            let displayTurns = [];
+            try {
+                displayTurns = JSON.parse(session.display_turns || '[]');
+            } catch (parseErr) {
+                console.warn('[council] Could not parse display_turns:', parseErr);
+            }
+
+            if (displayTurns.length) {
+                seedColorMapFromTurns(displayTurns);
+                displayTurns.forEach(renderSavedTurn);
+            } else if (session.conversation_text) {
+                const fallback = document.createElement('pre');
+                fallback.className = 'whitespace-pre-wrap text-xs leading-relaxed bg-surface-container-low rounded-md p-3 my-3 overflow-x-auto';
+                fallback.textContent = session.conversation_text;
+                output.appendChild(fallback);
+            }
+
             const hint = document.createElement('p');
-            hint.className = 'text-xs text-outline text-center italic mt-1 mb-3';
+            hint.className = 'text-xs text-outline text-center italic mt-4 mb-2';
             hint.textContent = 'Prior conversation loaded — ask a follow-up question below.';
             output.appendChild(hint);
 
+            output.scrollTop = output.scrollHeight;
             input.placeholder = 'ASK A FOLLOW-UP...';
             input.focus();
         } catch (err) {
@@ -734,6 +791,28 @@
     }
 
     // ── Submit query ──────────────────────────────────────────────
+    function appendUserQuestion(query, { followup = false } = {}) {
+        if (followup) {
+            const sep = document.createElement('div');
+            sep.className = 'flex items-center gap-3 my-5';
+            sep.innerHTML =
+                '<div class="h-px flex-grow bg-blue-200"></div>' +
+                '<span class="text-[9px] font-headline tracking-[0.3em] uppercase text-blue-500 font-bold whitespace-nowrap">Follow-up question</span>' +
+                '<div class="h-px flex-grow bg-blue-200"></div>';
+            output.appendChild(sep);
+        }
+
+        const wrap = document.createElement('div');
+        wrap.className = 'flex justify-end mb-4';
+        wrap.innerHTML =
+            '<div class="max-w-[85%] bg-primary-container text-on-primary-container rounded-2xl rounded-tr-md px-4 py-2.5 shadow-sm">' +
+                '<div class="font-headline text-[9px] tracking-[0.25em] uppercase text-on-primary-container/70 mb-1">You</div>' +
+                `<div class="whitespace-pre-wrap text-sm leading-relaxed">${escapeHtml(query)}</div>` +
+            '</div>';
+        output.appendChild(wrap);
+        output.scrollTop = output.scrollHeight;
+    }
+
     function submitQuery() {
         const query = input.value.trim();
         if (!query || sessionActive) return;
@@ -745,19 +824,10 @@
         input.value = '';
         input.style.height = 'auto';
 
-        // For follow-ups, add a visual separator instead of clearing output
-        if (conversationHistory) {
-            const sep = document.createElement('div');
-            sep.className = 'flex items-center gap-3 my-5';
-            sep.innerHTML =
-                '<div class="h-px flex-grow bg-blue-200"></div>' +
-                `<span class="text-[9px] font-headline tracking-[0.3em] uppercase text-blue-500 font-bold">Follow-up: ${query}</span>` +
-                '<div class="h-px flex-grow bg-blue-200"></div>';
-            output.appendChild(sep);
-            output.scrollTop = output.scrollHeight;
-        } else {
-            output.innerHTML = '';
-        }
+        // Follow-ups keep prior turns so the user sees the full thread.
+        const isFollowup = Boolean(conversationHistory);
+        if (!isFollowup) output.innerHTML = '';
+        appendUserQuestion(query, { followup: isFollowup });
 
         currentTurnEl = null;
         setSpeaking(null);
