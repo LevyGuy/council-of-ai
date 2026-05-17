@@ -2,7 +2,7 @@ import { marked } from 'marked';
 import { streamAnthropic } from './providers/anthropic.ts';
 import { streamOpenAI } from './providers/openai.ts';
 import { streamGoogle } from './providers/google.ts';
-import type { Message, ModelConfig, SessionRequest, Turn } from './types.ts';
+import type { DisplayTurn, Message, ModelConfig, SessionRequest, Turn } from './types.ts';
 
 // ── Constants (mirrors Python session.py) ────────────────────────────────────
 const COMPLETE_SIGNAL = '[COUNCIL_DONE]';
@@ -355,6 +355,7 @@ export async function* runSessionEvents(
       iterations: 0,
       transcript: null,
       conversation_text: req.prior_conversation ?? '',
+      display_turns: [],
     });
     return;
   }
@@ -410,6 +411,7 @@ export async function* runSessionEvents(
   yield sse({ type: 'iteration', number: 1, max: 1, label: 'Named council discussion' });
 
   const visibleTurns: Turn[] = [];
+  const displayTurns: DisplayTurn[] = [];
   for (const model of shuffled) {
     const conversationText = buildConversationText(
       req.query, visibleTurns, '', preparationBrief,
@@ -419,12 +421,9 @@ export async function* runSessionEvents(
       { role: 'user', content: conversationText },
     ];
 
-    yield sse({
-      type: 'speaker',
-      model_key: model.name.toLowerCase(),
-      name: model.name,
-      role: 'Council Discussion',
-    });
+    const modelKey = model.name.toLowerCase();
+    const role = 'Council Discussion';
+    yield sse({ type: 'speaker', model_key: modelKey, name: model.name, role });
 
     let fullText = '';
     try {
@@ -438,12 +437,10 @@ export async function* runSessionEvents(
     }
 
     const cleanText = fullText.replace(COMPLETE_SIGNAL, '').trim();
-    yield sse({
-      type: 'turn_end',
-      content: cleanText,
-      html: await markdownToHtml(cleanText),
-    });
-    visibleTurns.push({ modelName: model.name, role: 'Council Discussion', content: cleanText });
+    const html = await markdownToHtml(cleanText);
+    yield sse({ type: 'turn_end', content: cleanText, html });
+    visibleTurns.push({ modelName: model.name, role, content: cleanText });
+    displayTurns.push({ model_key: modelKey, name: model.name, role, content: cleanText, html });
   }
 
   const chairConversationText = buildConversationText(
@@ -454,12 +451,9 @@ export async function* runSessionEvents(
     { role: 'user', content: chairConversationText },
   ];
 
-  yield sse({
-    type: 'speaker',
-    model_key: first.name.toLowerCase(),
-    name: first.name,
-    role: 'Final Synthesis',
-  });
+  const chairKey = first.name.toLowerCase();
+  const chairRole = 'Final Synthesis';
+  yield sse({ type: 'speaker', model_key: chairKey, name: first.name, role: chairRole });
 
   let chairText = '';
   try {
@@ -473,12 +467,10 @@ export async function* runSessionEvents(
 
   if (chairText) {
     const cleanText = chairText.replace(COMPLETE_SIGNAL, '').trim();
-    yield sse({
-      type: 'turn_end',
-      content: cleanText,
-      html: await markdownToHtml(cleanText),
-    });
-    visibleTurns.push({ modelName: first.name, role: 'Final Synthesis', content: cleanText });
+    const html = await markdownToHtml(cleanText);
+    yield sse({ type: 'turn_end', content: cleanText, html });
+    visibleTurns.push({ modelName: first.name, role: chairRole, content: cleanText });
+    displayTurns.push({ model_key: chairKey, name: first.name, role: chairRole, content: cleanText, html });
   }
 
   const conversationText = buildConversationText(req.query, visibleTurns, '', preparationBrief);
@@ -488,5 +480,6 @@ export async function* runSessionEvents(
     iterations: Math.min(maxIterations, 1),
     transcript: null, // Workers don't persist files; history lives client-side
     conversation_text: conversationText,
+    display_turns: displayTurns,
   });
 }

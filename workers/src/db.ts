@@ -51,7 +51,8 @@ interface SaveSessionInput {
   id: string;
   query: string;
   conversation_text: string;
-  model_names: string; // JSON-encoded string[]
+  display_turns: string; // JSON-encoded DisplayTurn[]
+  model_names: string;   // JSON-encoded string[]
   iterations: number;
 }
 
@@ -66,8 +67,8 @@ export async function saveSession(
 
   await env.DB
     .prepare(
-      `INSERT INTO sessions (id, user_id, title, query, conversation_text, model_names, iterations, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO sessions (id, user_id, title, query, conversation_text, display_turns, model_names, iterations, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       data.id,
@@ -75,6 +76,7 @@ export async function saveSession(
       title,
       data.query,
       data.conversation_text,
+      data.display_turns,
       data.model_names,
       data.iterations,
       now,

@@ -55,6 +55,17 @@ export interface User {
   last_login: number;
 }
 
+// ── Display-friendly turn for client rehydration ─────────────────────────────
+// Stored as JSON in sessions.display_turns so the frontend can replay the full
+// conversation when a user opens a session from history.
+export interface DisplayTurn {
+  model_key: string;  // lowercased model name, matches modelColorMap key
+  name: string;       // e.g. "Claude"
+  role: string;       // e.g. "Council Discussion", "Final Synthesis"
+  content: string;    // raw markdown
+  html: string;       // rendered HTML (server-side via marked)
+}
+
 // ── Persisted session record (D1) ────────────────────────────────────────────
 export interface SessionRecord {
   id: string;
@@ -62,10 +73,14 @@ export interface SessionRecord {
   title: string;              // query truncated to 120 chars
   query: string;              // full original query
   conversation_text: string;  // full prior-conversation text fed back to LLMs
+  display_turns: string;      // JSON-encoded DisplayTurn[] for UI rehydration
   model_names: string;        // JSON-encoded string[], e.g. '["Claude","GPT"]'
   iterations: number;
   created_at: number;         // Unix epoch seconds
 }
 
-// Lightweight list view (conversation_text omitted for list responses)
-export type SessionListItem = Omit<SessionRecord, 'conversation_text' | 'query'>;
+// Lightweight list view (heavy fields omitted for list responses)
+export type SessionListItem = Omit<
+  SessionRecord,
+  'conversation_text' | 'query' | 'display_turns'
+>;
