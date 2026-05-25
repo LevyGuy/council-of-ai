@@ -202,6 +202,10 @@
   <img id="user-avatar" class="w-7 h-7 rounded-full bg-surface-container-highest object-cover hidden" alt="User avatar"/>
   <!-- Name hidden on mobile; shown only on sm+ to avoid overflow -->
   <span id="user-name" class="hidden sm:inline text-[10px] font-headline text-outline tracking-wider max-w-[120px] truncate"></span>
+  <button id="new-conversation-btn" title="New conversation"
+    class="text-outline hover:text-on-surface transition-colors p-2 rounded min-w-[36px] min-h-[36px] flex items-center justify-center">
+    <span class="material-symbols-outlined text-lg leading-none">add_comment</span>
+  </button>
   <button id="history-btn" title="Conversation history"
     class="text-outline hover:text-on-surface transition-colors p-2 rounded min-w-[36px] min-h-[36px] flex items-center justify-center">
     <span class="material-symbols-outlined text-lg leading-none">history</span>
@@ -390,10 +394,12 @@
             },
         });
 
-        // Handle OAuth redirect callback
+        // Handle OAuth redirect callback. The hash (#/c/<id>) is dropped by
+        // the Auth0 round-trip, so we stash it in appState and restore it here.
         if (window.location.search.includes('code=') && window.location.search.includes('state=')) {
-            await auth0Client.handleRedirectCallback();
-            window.history.replaceState({}, document.title, window.location.pathname);
+            const result = await auth0Client.handleRedirectCallback();
+            const target = result?.appState?.target || '';
+            window.history.replaceState({}, document.title, window.location.pathname + target);
         }
 
         const isAuthenticated = await auth0Client.isAuthenticated();
@@ -437,6 +443,10 @@
         } catch (e) {
             console.warn('[council] User registration call failed:', e);
         }
+
+        // If the page was opened via a direct conversation link, load it.
+        const convId = conversationIdFromUrl();
+        if (convId) resumeSession(convId);
     }
 
     function showLoginOverlay() {
@@ -448,7 +458,12 @@
     }
 
     document.getElementById('login-btn').addEventListener('click', () => {
-        if (auth0Client) auth0Client.loginWithRedirect();
+        if (auth0Client) {
+            // Preserve any direct conversation link across the login round-trip.
+            auth0Client.loginWithRedirect({
+                appState: { target: window.location.hash },
+            });
+        }
     });
 
     document.getElementById('logout-btn').addEventListener('click', () => {
@@ -458,6 +473,21 @@
             });
         }
     });
+
+    // ── Conversation URL routing ──────────────────────────────────
+    // Conversations are addressable via the hash fragment `#/c/<id>`.
+    // A hash is used (rather than a path) so the static page needs no
+    // server-side rewrites, and it survives the Auth0 redirect via appState.
+    function conversationIdFromUrl() {
+        const m = window.location.hash.match(/^#\/c\/([^/?#]+)/);
+        return m ? decodeURIComponent(m[1]) : null;
+    }
+
+    function setConversationUrl(sessionId) {
+        const hash = sessionId ? `#/c/${encodeURIComponent(sessionId)}` : '';
+        const url = window.location.pathname + window.location.search + hash;
+        window.history.replaceState({}, document.title, url);
+    }
 
     // ── History panel ─────────────────────────────────────────────
     const historyPanel    = document.getElementById('history-panel');
@@ -485,6 +515,7 @@
     });
     document.getElementById('history-close').addEventListener('click', closeHistoryPanel);
     document.getElementById('history-backdrop').addEventListener('click', closeHistoryPanel);
+    document.getElementById('new-conversation-btn').addEventListener('click', newConversation);
 
     function escapeHtml(str) {
         return String(str)
@@ -624,8 +655,16 @@
             const resp  = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`, {
                 headers: await authHeaders(),
             });
+            if (resp.status === 404 || resp.status === 401 || resp.status === 403) {
+                showConversationAccessError();
+                return;
+            }
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const session = await resp.json();
+            if (!title) title = session.title || session.query || 'Conversation';
+
+            // Reflect the loaded conversation in the URL for direct linking.
+            setConversationUrl(sessionId);
 
             // Restore prior-conversation context so the next query is a follow-up
             conversationHistory = session.conversation_text || '';
@@ -704,6 +743,33 @@
         } catch (err) {
             console.error('[council] Failed to delete session:', err);
         }
+    }
+
+    // Reset the UI to a fresh, empty conversation and clear the URL hash.
+    function newConversation() {
+        closeHistoryPanel();
+        if (sessionActive) return;
+        conversationHistory = '';
+        priorDisplayEntries = [];
+        modelColorMap = {};
+        output.innerHTML = '';
+        setConversationUrl(null);
+        input.placeholder = 'QUERY THE COUNCIL... (Shift+Enter for newline)';
+        input.value = '';
+        input.style.height = 'auto';
+        input.focus();
+    }
+
+    function showConversationAccessError() {
+        output.innerHTML = '';
+        setConversationUrl(null);
+        const msg = document.createElement('div');
+        msg.className = 'text-center text-outline text-xs py-12 leading-relaxed';
+        msg.innerHTML =
+            'Conversation not found, or you don’t have access to it.<br/>' +
+            'Start a new conversation below.';
+        output.appendChild(msg);
+        input.placeholder = 'QUERY THE COUNCIL... (Shift+Enter for newline)';
     }
 
     // ── DOM refs ──────────────────────────────────────────────────
@@ -1158,6 +1224,10 @@
                 }
                 if (Array.isArray(event.display_turns)) {
                     priorDisplayEntries = event.display_turns;
+                }
+                // Make the freshly saved conversation directly linkable.
+                if (event.session_id) {
+                    setConversationUrl(event.session_id);
                 }
 
                 const footer = document.createElement('div');
