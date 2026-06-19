@@ -27,7 +27,7 @@ function buildModelConfigs(env: Env): ModelConfig[] {
   const configs: ModelConfig[] = [];
 
   if (env.ANTHROPIC_API_KEY) {
-    configs.push({ name: 'Claude', provider: 'anthropic', modelId: 'claude-sonnet-4-20250514', apiKey: env.ANTHROPIC_API_KEY });
+    configs.push({ name: 'Claude', provider: 'anthropic', modelId: 'claude-sonnet-4-6', apiKey: env.ANTHROPIC_API_KEY });
   }
   if (env.OPENAI_API_KEY) {
     configs.push({ name: 'GPT', provider: 'openai', modelId: 'gpt-4o', apiKey: env.OPENAI_API_KEY });
